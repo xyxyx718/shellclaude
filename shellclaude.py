@@ -1,12 +1,12 @@
 #!/usr/bin/env python3
 """shellclaude v1.6.1 — Inspired by opencode and openclaude. Supports OpenAI-compatible and Anthropic endpoints."""
 
-import os, json, sqlite3, subprocess, difflib, time, hashlib, importlib.util, re, random, shlex
-from contextlib import nullcontext
+import os, json, sqlite3, subprocess, difflib, time, hashlib, importlib.util, re, random, shlex, shutil, tempfile
+from contextlib import closing, nullcontext
 from datetime import datetime
 from urllib.request import Request, urlopen
 from urllib.error import HTTPError, URLError
-from urllib.parse import quote_plus, unquote_plus
+from urllib.parse import quote, quote_plus, unquote_plus
 
 try:
     from rich.console import Console, ConsoleOptions, RenderResult
@@ -64,9 +64,12 @@ def _chatgpt_call(cfg, messages, streaming=False):
 
 # CONFIG
 
-CFG_PATH = os.path.expanduser("~/Documents/shellclaude.json")
-DB_PATH  = os.path.expanduser("~/Documents/shellclaude.db")
-ALLOWLIST_PATH = os.path.expanduser("~/Documents/shellclaude/allowlist.txt")
+APP_DIR = os.path.dirname(os.path.realpath(__file__))
+DATA_DIR = os.path.join(APP_DIR, "shellclaude-data")
+CFG_PATH = os.path.join(DATA_DIR, "shellclaude.json")
+DB_PATH = os.path.join(DATA_DIR, "shellclaude.db")
+ALLOWLIST_PATH = os.path.join(DATA_DIR, "allowlist.txt")
+EXPORTS_DIR = os.path.join(DATA_DIR, "exports")
 
 DEFAULT_CFG = {
     "api_key":        "",
@@ -94,14 +97,15 @@ DISPLAY_TOOL_ARGS_MAX = 120    # tool call args preview in agent_loop
 DISPLAY_TOOL_RESULT_MAX = 1000 # tool result preview in agent_loop
 CMD_OUTPUT_MAX        = 50000  # safety cap on command output size
 
-PLUGINS_DIR  = os.path.expanduser("~/Documents/shellclaude/plugins")
-SKILLS_DIR   = os.path.expanduser("~/Documents/shellclaude/skills")
-TOOL_TMP_DIR = os.path.expanduser("~/Documents/shellclaude/.tmp")
+PLUGINS_DIR = os.path.join(DATA_DIR, "plugins")
+SKILLS_DIR = os.path.join(DATA_DIR, "skills")
+TOOL_TMP_DIR = os.path.join(DATA_DIR, ".tmp")
 
 # Paths the agent is never allowed to write — prevents self-modification attacks
 PROTECTED_PATHS = frozenset(
     os.path.realpath(p) for p in (
         CFG_PATH, DB_PATH, ALLOWLIST_PATH, PLUGINS_DIR,
+        os.path.join(DATA_DIR, ".migration.sqlite3"),
         os.path.expanduser("~/Library/Application Support/shellclaude/auth"),
     )
 )
@@ -112,8 +116,8 @@ TOOL_CACHE       = {}
 SESSION_COST     = 0.0
 _LAST_MSG_COST   = 0.0   # cost of most recent API call (for per-message DB tracking)
 SESSION_EDITS    = []     # trail of file writes/patches: [{path, bak, op, ts}]
-SNIPPETS_DIR     = os.path.expanduser("~/Documents/shellclaude/snippets")
-PERSONAS_DIR     = os.path.expanduser("~/Documents/shellclaude/personas")
+SNIPPETS_DIR = os.path.join(DATA_DIR, "snippets")
+PERSONAS_DIR = os.path.join(DATA_DIR, "personas")
 _DEBUG           = False  # /debug on|off
 _DIFF_MODE       = False  # /diff on — show changes without writing
 _SAFE_MODE       = False  # /safe on — all tool calls need confirmation
@@ -1048,6 +1052,11 @@ _SENSITIVE_READ_PATHS = frozenset([
     os.path.realpath(CFG_PATH),
     os.path.realpath(DB_PATH),
     os.path.realpath(ALLOWLIST_PATH),
+    *(os.path.realpath(os.path.expanduser(path)) for path in (
+        "~/Documents/shellclaude.json", "~/Documents/shellclaude.db",
+        "~/Documents/shellclaude/shellclaude.json", "~/Documents/shellclaude/shellclaude.db",
+        "~/Documents/shellclaude/allowlist.txt",
+    )),
 ])
 # Filename patterns that suggest credentials regardless of location
 _SENSITIVE_READ_PATTERNS = re.compile(
@@ -2773,6 +2782,95 @@ def cmd_auth(cfg, command, arg):
 
 
 # CONFIG HELPERS
+def _copy_legacy_file(source, target, database=False):
+    """Publish a complete snapshot; leave the legacy source intact for rollback."""
+    if os.path.lexists(target):
+        return
+    fd, temporary = tempfile.mkstemp(prefix=".migrating-", dir=os.path.dirname(target))
+    os.close(fd)
+    try:
+        if database:
+            # backup() includes committed WAL data; copying only the .db can lose it.
+            source_uri = "file:" + quote(os.path.abspath(source), safe="/") + "?mode=ro"
+            deadline = time.monotonic() + 30
+            def progress(status, remaining, total):
+                if time.monotonic() > deadline:
+                    raise RuntimeError("旧会话数据库正忙，迁移未完成。请退出其他 shellclaude 后重试。")
+            with closing(sqlite3.connect(source_uri, uri=True, timeout=5)) as old:
+                with closing(sqlite3.connect(temporary)) as new:
+                    old.backup(new, pages=128, progress=progress, sleep=0.05)
+                    if new.execute("PRAGMA quick_check").fetchone()[0] != "ok":
+                        raise RuntimeError("旧会话数据库检查失败，原文件已保留。")
+        else:
+            if target.endswith("shellclaude.json"):
+                with open(source, encoding="utf-8") as f:
+                    if not isinstance(json.load(f), dict):
+                        raise ValueError("旧配置必须是 JSON 对象")
+            with open(source, "rb") as src, open(temporary, "wb") as dst:
+                shutil.copyfileobj(src, dst)
+                dst.flush()
+                os.fsync(dst.fileno())
+        if not os.path.lexists(target):
+            os.replace(temporary, target)
+    finally:
+        if os.path.exists(temporary):
+            os.unlink(temporary)
+
+
+def migrate_legacy_data(data_dir=None, documents_dir=None):
+    """One-time, serialized import. Existing destinations always take precedence.
+
+    Import only known old locations; never consume files from the current project.
+    OAuth credentials stay in their separate local Library directory.
+    """
+    data_dir = data_dir or DATA_DIR
+    documents_dir = documents_dir or os.path.expanduser("~/Documents")
+    os.makedirs(data_dir, mode=0o700, exist_ok=True)
+    try:
+        os.chmod(data_dir, 0o700)
+    except OSError:
+        pass
+    legacy_dir = os.path.join(documents_dir, "shellclaude")
+    # SQLite supplies a crash-released cross-process lock without requiring fcntl.
+    lock_path = os.path.join(data_dir, ".migration.sqlite3")
+    connection = sqlite3.connect(lock_path, timeout=15)
+    copied = []
+    try:
+        connection.execute("CREATE TABLE IF NOT EXISTS migrations (name TEXT PRIMARY KEY)")
+        connection.execute("BEGIN IMMEDIATE")
+        if connection.execute("SELECT 1 FROM migrations WHERE name='data-layout-v1'").fetchone():
+            return
+        for name in ("shellclaude.json", "shellclaude.db", "allowlist.txt"):
+            target = os.path.join(data_dir, name)
+            if os.path.lexists(target):
+                continue
+            sources = ([os.path.join(legacy_dir, name)] if name == "allowlist.txt" else
+                       [os.path.join(documents_dir, name), os.path.join(legacy_dir, name)])
+            source = next((path for path in sources if os.path.isfile(path)), None)
+            if source:
+                _copy_legacy_file(source, target, database=name.endswith(".db"))
+                copied.append(name)
+        for name in ("plugins", "skills", "snippets", "personas"):
+            source, target = os.path.join(legacy_dir, name), os.path.join(data_dir, name)
+            if not os.path.isdir(source) or os.path.lexists(target):
+                continue
+            staging = tempfile.mkdtemp(prefix=".migrating-", dir=data_dir)
+            try:
+                shutil.copytree(source, os.path.join(staging, name), symlinks=True)
+                if not os.path.lexists(target):
+                    os.rename(os.path.join(staging, name), target)
+                    copied.append(name + "/")
+            finally:
+                shutil.rmtree(staging)
+        connection.execute("INSERT INTO migrations (name) VALUES ('data-layout-v1')")
+        connection.commit()
+    finally:
+        connection.close()
+    if copied:
+        pr_info("已自动迁移旧数据到：" + data_dir)
+        pr_dim("  迁移项目：" + "、".join(copied) + "。旧文件保留作备份，不会自动删除。")
+
+
 def load_cfg():
     cfg = json.loads(json.dumps(DEFAULT_CFG))
     cfg_has_key = False
@@ -3018,7 +3116,7 @@ def cmd_export(msgs, sid, arg):
     name = arg.strip() if arg.strip() else f"shellclaude-export-{ts}.md"
     if not name.endswith(".md"):
         name += ".md"
-    path = os.path.expanduser(f"~/Documents/shellclaude/{name}")
+    path = os.path.expanduser(os.path.join(EXPORTS_DIR, name))
     os.makedirs(os.path.dirname(path), exist_ok=True)
     lines = [f"# shellclaude export — session #{sid}\n", f"_{ts}_\n\n---\n"]
     for m in msgs:
@@ -3112,6 +3210,12 @@ def _check_path_safety(path, label):
 
 
 def main():
+    try:
+        migrate_legacy_data()
+    except (OSError, ValueError, RuntimeError, sqlite3.Error):
+        # Never silently start with empty history/settings after a failed migration.
+        print_error("数据目录初始化或旧数据迁移失败，原文件未改动。请检查文件权限、旧配置 JSON、数据库和是否有其他实例正在运行后重试。")
+        return
     cfg  = load_cfg()
     global PLUGIN_REGISTRY, ALLOWLIST, SYSTEM, SESSION_COST, _current_model, SKILLS_REGISTRY
     SYSTEM = cfg.get("system") or DEFAULT_SYSTEM
