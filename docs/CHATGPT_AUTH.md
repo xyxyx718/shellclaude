@@ -46,7 +46,7 @@ a-Shell 项目中有 Python HTTP 服务器的使用记录，说明不能简单�
 8. 验证签名、issuer、audience、exp、iat、nbf（如有）、nonce、sub，以及多 audience 时的 azp。返回账号必须匹配已选择的注册。
 9. 仅成功验证后激活账号。没有 direct scope 时保留身份登录，但拒绝订阅推理；`/login consent` 是用户主动重新请求授权。
 
-凭据位置：`~/Library/Application Support/shellclaude/auth/`，与 Documents 中的普通 JSON 配置、SQLite 会话数据库分开。`host.json` 只包含安装标识；`credentials.json` 按 issued client ID 保存经过验证的 subject、账号标签和令牌。`/auth accounts` 展示稳定标签与可选的已验证邮箱，邮箱不能作为注册主键。
+凭据位置：`~/Library/Application Support/shellclaude/auth/`，与脚本旁 `shellclaude-data/` 内的普通 JSON 配置、SQLite 会话数据库分开。`host.json` 只包含安装标识；`credentials.json` 按 issued client ID 保存经过验证的 subject、账号标签和令牌。`/auth accounts` 展示稳定标签与可选的已验证邮箱，邮箱不能作为注册主键。
 
 目录权限尽可能为 0700，文件为 0600；同目录临时文件、flush/fsync、`os.replace`，目录 fsync 在支持时执行。检测明显 iCloud 路径并拒绝存储。**这些文件未加密，不是 iOS Keychain**；Library 也可能进入系统备份，不能保证防备份或防恢复克隆。不要把该目录放进 iCloud、git 或支持附件；复制到另一设备运行时不要复用旧 host.json。卸载前可先 `/logout`，需要清除所有注册时对各账号依次登出，再删除凭据文件。
 
@@ -57,6 +57,16 @@ a-Shell 项目中有 Python HTTP 服务器的使用记录，说明不能简单�
 认证响应、tokens、授权码和 verifier 不进入 debug hook。错误默认显示 HTTP 状态、代码、参数、请求 ID 和响应形状，避免回显可能包含凭据的服务端原文。运输异常和 JWT 异常经过净化。调试对象还会递归隐藏 token 字段、Bearer 值和回调／授权 URL。
 
 OAuth 目录加入现有文件读写保护。现有 run_python／run_command／插件仍在用户权限下运行，**这不是针对恶意代码的进程沙箱**。不要批准访问凭据的命令；建议 `/safe on`，审查第三方插件。没有通过 monkey-patch Python 文件 API 等脆弱方式伪造隔离。
+
+## 普通数据目录升级
+
+普通数据路径由 `__file__` 的真实目录确定，统一放入 `shellclaude-data/`。不依赖当前项目路径，也不会因 `/cd` 改变。首次启动通过 `.migration.sqlite3` 序列化导入并记录完成状态；SQLite 锁在进程退出时释放，无需 fcntl。
+
+支持 Documents 根目录与旧 shellclaude 子目录的已知配置／数据库布局；迁移 allowlist、plugins、skills、snippets、personas。只复制，不删除源，不覆盖已存在目标，不合并既有目录。配置先检查 JSON 对象；数据库通过只读连接和 backup 接口复制完整已提交快照，包括 WAL，然后执行 quick_check。配置和数据库通过同目录临时文件发布，资源目录先 staging 再改名。失败不标记完成，可以重试；成功后不复活用户后来删除的目标文件。迁移失败时停止启动，避免看起来像配置或会话丢失。
+
+旧凭据配置的文件读取保护保留，避免升级备份被模型读取。OAuth host ID 和 tokens 不迁移，原 Library 存储与登录保持不变。普通数据目录本身仍可能位于 iCloud，保存的 API key 和历史记录不是加密文件，用户应选择本地安装目录。
+
+旧版本留下的数据副本会继续留在原路径，确认升级正常后可手动清理。不要在新旧实例间同时写入；旧版本的后续改动不会自动同步。迁移不处理未知自定义路径、历史导出或临时文件，移动安装位置时应一起移动数据子目录。
 
 ## 推理、工具和会话
 
