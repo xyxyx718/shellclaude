@@ -94,6 +94,19 @@ Anthropic 使用 `/endpoint anthropic` 和自己的 key、model；也可继续�
 
 OAuth 凭据继续单独放在本机 Library，不放入项目目录；本次路径调整不改变已有 ChatGPT 登录。
 
+### 预置 a-Shell 平台 AGENTS.md
+
+首次启动会在 `shellclaude-data/AGENTS.md` 生成预置平台规则，无需额外下载，也不会在你的项目中创建或覆盖 AGENTS.md。规则明确区分 iOS 沙箱、Python 与 WASM 能力，以及 shellclaude 本身的命令过滤限制；避免建议 Linux 可执行文件、原生子进程、Bash 管道或后台服务器等不适合当前环境的做法。
+
+平台规则与项目规则分开：平台规则在每次 API 请求中附加，项目自己的 AGENTS.md 仍按当前目录向上查找并加载。自定义 system prompt、persona 或切换模型不会自动移除平台规则。这是给模型的运行提示，工具审批和硬性过滤仍由代码执行，不把 AGENTS.md 当作安全沙箱。
+
+- `/agents`：显示平台规则文件与当前项目规则来源。
+- 手动编辑 `shellclaude-data/AGENTS.md` 可以补充本机已验证的工具、路径和版本；已有文件不会在启动时被覆盖。
+- `/agents reload`：重新读取两份规则，包括同一路径文件的新修改。
+- 平台文件不存在、为空或不可读时，使用内置默认内容；要恢复预置文件，可退出程序后删除该文件，再启动。
+
+仓库内的 [defaults/AGENTS.md](defaults/AGENTS.md) 是可审阅的预置文本，主程序同时内置一份，保持原来的直接下载 Python 文件安装方式。
+
 ### 凭据与登出
 
 OAuth 资料独立保存在 `~/Library/Application Support/shellclaude/auth/`，尽可能使用 0700／0600 权限、原子写入与跨进程锁。它们不进入配置、会话 DB 或调试输出。access token 自动到期刷新，轮换后的 refresh token 一并替换。文件损坏时停止使用并提示恢复，网络暂时失败不会清除凭据。
@@ -315,6 +328,7 @@ Priority: `OPENAI_API_KEY` / `ANTHROPIC_API_KEY` env vars beat config file. Env 
 
 ```
 <shellclaude.py 所在目录>/shellclaude-data/
+├── AGENTS.md             # Editable a-Shell platform guidance
 ├── shellclaude.json      # Config
 ├── shellclaude.db        # Session database
 ├── allowlist.txt         # Command allowlist
