@@ -13,21 +13,20 @@ Terminal coding tool for [a-Shell](https://github.com/holzschu/a-Shell). Support
 
 需要符合 OpenAI 当前条件的 ChatGPT 账号／workspace（目标为有资格的 Plus／Pro 用户），并同意 `chatgpt.tokens.use.direct`。最终是否可用取决于账号、地区、workspace 策略和服务端授权。订阅用量与 API 账单是不同路径，不会自动改用 API key 计费；订阅也不意味着无限调用。查看 [ChatGPT 设置 → Usage](https://chatgpt.com/#settings/Usage) 管理应用用量与授权。
 
-### 在 App Store a-Shell 安装
+### Quick start：在 a-Shell 直接下载
 
-本实现分支：[feature/chatgpt-sign-in](https://github.com/xyxyx718/shellclaude/tree/feature/chatgpt-sign-in) · [下载完整 ZIP](https://github.com/xyxyx718/shellclaude/archive/refs/heads/feature/chatgpt-sign-in.zip)。
-
-使用 a-Shell 提供的 Python 3.13，不需要越狱、Node、Rust、Codex CLI、Docker 或远程服务器。
-
-从**包含本改动的分支／release**取得 `shellclaude.py`、`shellclaude_auth.py`、`shellclaude_responses.py` 与 `requirements-chatgpt.txt`，放在“我的 iPad → a-Shell”同一目录，例如 `~/Documents/shellclaude-chatgpt/`。可以直接解压本任务交付包；不要仅下载 upstream 的单文件来尝试新登录。
+在 App Store a-Shell 中执行以下命令。三个 Python 文件放在同一目录，无需下载或解压整个仓库：
 
 ```sh
-cd ~/Documents/shellclaude-chatgpt
-python3 --version
-python3 -m pip install rich
-python3 -m pip install -r requirements-chatgpt.txt
+cd ~/Documents
+python3 -m pip install rich 'PyJWT>=2.10,<3' 'rsa>=4.9.1,<5'
+curl -fsSL https://raw.githubusercontent.com/xyxyx718/shellclaude/feature/chatgpt-sign-in/shellclaude.py -o shellclaude.py
+curl -fsSL https://raw.githubusercontent.com/xyxyx718/shellclaude/feature/chatgpt-sign-in/shellclaude_auth.py -o shellclaude_auth.py
+curl -fsSL https://raw.githubusercontent.com/xyxyx718/shellclaude/feature/chatgpt-sign-in/shellclaude_responses.py -o shellclaude_responses.py
 python3 shellclaude.py
 ```
+
+使用 a-Shell 提供的 Python 3.13，不需要越狱、Node、Rust、Codex CLI、Docker 或远程服务器。上述链接指向本实现的 [feature/chatgpt-sign-in 分支](https://github.com/xyxyx718/shellclaude/tree/feature/chatgpt-sign-in)。
 
 `rich` 是原项目可选的显示依赖；新登录只增加纯 Python PyJWT、rsa 及 rsa 的 pyasn1 依赖。不要安装 `PyJWT[crypto]`，不需要编译扩展。只用旧 API-key provider 时，仍可继续单文件安装，不需新依赖。
 
