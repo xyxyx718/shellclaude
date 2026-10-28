@@ -266,10 +266,23 @@ def is_allowed(value, allowlist):
     return False
 
 def ask_permission(action, detail):
-    pr_tool(f"\n  ⚠  {action}:")
+    labels = {
+        "run command": "执行命令", "write file": "写入文件",
+        "read_file": "读取文件", "list_files": "列出文件",
+        "search_files": "搜索文件", "patch_file": "修改文件",
+        "run_command": "执行命令", "write_file": "写入文件",
+        "run_python": "运行 Python", "run_c": "运行 C 程序",
+        "run_cpp": "运行 C++ 程序",
+    }
+    if action.startswith("[safe] "):
+        name = action[len("[safe] "):]
+        label = "安全模式确认：" + labels.get(name, name)
+    else:
+        label = labels.get(action, action)
+    pr_tool(f"\n  ⚠  {label}：")
     pr_dim(f"     {detail[:DISPLAY_DETAIL_MAX]}")
     try:
-        ans = input("  Allow? [y]es / [a]lways / [n]o: ").strip().lower()
+        ans = input("  是否允许？y=允许一次 / a=始终允许 / n=拒绝（默认）：").strip().lower()
     except (KeyboardInterrupt, EOFError):
         ans = "n"
     return ans if ans in ("y", "a", "n") else "n"
@@ -1217,22 +1230,36 @@ def tool_run_command(cmd, allowlist=None):
         if ans == "n":
             return "DENIED: user rejected command"
         if ans == "a":
-            pr_tool("  Allowlist this exact command, or a prefix pattern (e.g. 'cargo *')?")
-            pr_dim("  [e] exact command  [p] prefix wildcard (e.g. 'cargo *')  [x] cancel")
-            ans2 = input("  choice: ").strip().lower()
-            if ans2 == "x":
-                return "DENIED: user cancelled allowlist"
-            elif ans2 == "p":
+            pr_tool("  请选择始终允许的范围：")
+            # Plain numbered lines also render reliably without Rich markup.
+            print("    1. 仅此完整命令（默认）", flush=True)
+            print("    2. 命令前缀（允许该程序的其他参数）", flush=True)
+            print("    3. 取消本次执行", flush=True)
+            try:
+                choice = input("  请输入编号（直接回车选 1）：").strip().lower()
+            except (KeyboardInterrupt, EOFError):
+                return "DENIED: 用户取消了授权"
+            if choice in ("3", "x"):
+                return "DENIED: 用户取消了授权"
+            if choice in ("2", "p"):
                 token = cmd_stripped.split()[0]
                 entry = token + " *"
-                pr_err(f"  ⚠  Pattern '{entry}' will auto-approve all '{token}' subcommands")
-                confirm = input("  Confirm? [y/N] ").strip().lower()
+                pr_err(f"  ⚠  规则 '{entry}' 会自动允许该前缀下的所有命令和参数")
+                try:
+                    confirm = input("  确认添加此规则？y=确认 / n=取消（默认）：").strip().lower()
+                except (KeyboardInterrupt, EOFError):
+                    return "DENIED: 用户取消了授权"
                 if confirm != "y":
-                    return "DENIED: user cancelled allowlist"
-            else:
+                    return "DENIED: 用户取消了授权"
+            elif choice in ("", "1", "e"):
                 entry = cmd_stripped
+            else:
+                pr_err("  无效选项，已取消执行。请输入 1、2 或 3。")
+                return "DENIED: 无效的授权选项"
             allowlist.append(entry)
             save_allowlist(allowlist)
+            pr_dim("  已保存允许规则。")
+
     try:
         out, _rc = _exec_shell(cmd, timeout=60)
         if len(out) > CMD_OUTPUT_MAX:
