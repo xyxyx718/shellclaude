@@ -25,6 +25,43 @@ except ImportError:
     _RICH = False
 
 
+# Optional ChatGPT modules are loaded lazily so API-key single-file installs still work.
+def auth_provider(cfg):
+    method = cfg.get("auth_method")
+    if method in ("openai_api", "anthropic", "chatgpt"):
+        return method
+    return "anthropic" if cfg.get("endpoint_type") == "anthropic" else "openai_api"
+
+
+def _chatgpt_auth():
+    try:
+        from shellclaude_auth import ChatGPTAuth
+    except ImportError:
+        raise RuntimeError("Install shellclaude_auth.py and shellclaude_responses.py alongside shellclaude.py for ChatGPT login.") from None
+    return ChatGPTAuth()
+
+
+def _chatgpt_provider():
+    try:
+        from shellclaude_responses import ResponsesProvider
+    except ImportError:
+        raise RuntimeError("Install shellclaude_responses.py alongside shellclaude.py.") from None
+    return ResponsesProvider(_chatgpt_auth())
+
+
+def _chatgpt_call(cfg, messages, streaming=False):
+    global _LAST_MSG_COST
+    _LAST_MSG_COST = 0.0  # Subscription usage is not an API dollar estimate.
+    def show(delta):
+        print(delta, end="", flush=True)
+    try:
+        return _chatgpt_provider().call(cfg["model"], messages, _sys_prompt(cfg), get_tool_defs(),
+                                       show if streaming else None, _CANCEL.is_set)
+    finally:
+        if streaming:
+            print()
+
+
 # CONFIG
 
 CFG_PATH = os.path.expanduser("~/Documents/shellclaude.json")
@@ -65,6 +102,7 @@ TOOL_TMP_DIR = os.path.expanduser("~/Documents/shellclaude/.tmp")
 PROTECTED_PATHS = frozenset(
     os.path.realpath(p) for p in (
         CFG_PATH, DB_PATH, ALLOWLIST_PATH, PLUGINS_DIR,
+        os.path.expanduser("~/Library/Application Support/shellclaude/auth"),
     )
 )
 
@@ -139,6 +177,12 @@ def _fetch_model_list(cfg):
     """Fetch model list from {base_url}/models, extract context window + pricing.
     Silently no-ops if endpoint doesn't return those fields (direct OpenAI/Anthropic)."""
     global _MODEL_METADATA_CACHE
+    if auth_provider(cfg) == "chatgpt":
+        try:
+            return _chatgpt_provider().models()
+        except RuntimeError as e:
+            pr_err(str(e))
+            return []
     base = (cfg.get("base_url") or "").rstrip("/")
     if not base:
         return
@@ -1008,6 +1052,9 @@ _SENSITIVE_READ_PATTERNS = re.compile(
 def _is_sensitive_path(path):
     """Return (True, reason) if path should be blocked for AI reads."""
     abs_path = os.path.realpath(os.path.expanduser(path))
+    auth_dir = os.path.realpath(os.path.expanduser("~/Library/Application Support/shellclaude/auth"))
+    if abs_path == auth_dir or abs_path.startswith(auth_dir + os.sep):
+        return True, "shellclaude OAuth storage"
     if abs_path in _SENSITIVE_READ_PATHS:
         return True, "shellclaude config/db (contains API key)"
     if _SENSITIVE_READ_PATTERNS.search(path.replace("\\", "/")):
@@ -1775,6 +1822,10 @@ def db_init():
         conn.execute("ALTER TABLE messages ADD COLUMN tool_call_id TEXT")
     except sqlite3.OperationalError:
         pass
+    try:
+        conn.execute("ALTER TABLE messages ADD COLUMN responses_output TEXT")
+    except sqlite3.OperationalError:
+        pass
     conn.commit()
     return conn
 
@@ -1793,14 +1844,14 @@ def db_update_cwd(conn, sid):
     conn.execute("UPDATE sessions SET cwd=? WHERE id=?", (os.getcwd(), sid))
     conn.commit()
 
-def db_save_msg(conn, sid, role, content, tool_calls=None, thinking=None, cost=0, tool_call_id=None):
+def db_save_msg(conn, sid, role, content, tool_calls=None, thinking=None, cost=0, tool_call_id=None, responses_output=None):
     conn.execute(
-        "INSERT INTO messages (session_id, role, content, thinking, tool_calls, cost, ts, tool_call_id) VALUES (?,?,?,?,?,?,?,?)",
+        "INSERT INTO messages (session_id, role, content, thinking, tool_calls, cost, ts, tool_call_id, responses_output) VALUES (?,?,?,?,?,?,?,?,?)",
         (sid, role, content, thinking,
          json.dumps(tool_calls) if tool_calls else None,
          cost,
          datetime.now().isoformat(),
-         tool_call_id)
+         tool_call_id, json.dumps(responses_output) if responses_output else None)
     )
     conn.commit()
 
@@ -1828,12 +1879,14 @@ def db_load_session(conn, sid, branch_name=None):
         except OSError:
             pass
     rows = conn.execute(
-        "SELECT id, role, content, thinking, tool_calls, cost, pinned, tool_call_id FROM messages WHERE session_id=? ORDER BY id",
+        "SELECT id, role, content, thinking, tool_calls, cost, pinned, tool_call_id, responses_output FROM messages WHERE session_id=? ORDER BY id",
         (sid,)
     ).fetchall()
     msgs = []
-    for msg_id, role, content, thinking, tc, cost, pinned, tc_id in rows:
+    for msg_id, role, content, thinking, tc, cost, pinned, tc_id, output in rows:
         m = {"role": role, "content": content or "", "_db_id": msg_id, "_pinned": bool(pinned)}
+        if output:
+            m["_responses_output"] = json.loads(output)
         if role == "tool" and tc_id:
             m["tool_call_id"] = tc_id
         if thinking:
@@ -1858,18 +1911,20 @@ def db_pin_message(conn, sid, msg_index, msgs, pin=True):
 def db_import_messages(conn, src_sid, indices, dst_sid):
     """Copy specific message indices from src_sid into dst_sid. Returns list of copied msgs."""
     rows = conn.execute(
-        "SELECT role, content, thinking, tool_calls FROM messages WHERE session_id=? ORDER BY id",
+        "SELECT role, content, thinking, tool_calls, tool_call_id, responses_output FROM messages WHERE session_id=? ORDER BY id",
         (src_sid,)
     ).fetchall()
     imported = []
     for i in indices:
         if 0 <= i < len(rows):
-            role, content, thinking, tc = rows[i]
+            role, content, thinking, tc, tc_id, output = rows[i]
             conn.execute(
-                "INSERT INTO messages (session_id, role, content, thinking, tool_calls, ts) VALUES (?,?,?,?,?,?)",
-                (dst_sid, role, content, thinking, tc, datetime.now().isoformat())
+                "INSERT INTO messages (session_id, role, content, thinking, tool_calls, ts, tool_call_id, responses_output) VALUES (?,?,?,?,?,?,?,?)",
+                (dst_sid, role, content, thinking, tc, datetime.now().isoformat(), tc_id, output)
             )
             m = {"role": role, "content": content or ""}
+            if output:   m["_responses_output"] = json.loads(output)
+            if tc_id:    m["tool_call_id"] = tc_id
             if thinking: m["thinking"] = thinking
             if tc:       m["tool_calls"] = json.loads(tc)
             imported.append(m)
@@ -2000,7 +2055,7 @@ def _sys_prompt(cfg):
         return base + "\n\nRespond ONLY with valid YAML. No prose, no markdown fences."
     return base
 
-_INTERNAL_MSG_KEYS = frozenset(("_db_id", "_pinned", "thinking"))
+_INTERNAL_MSG_KEYS = frozenset(("_db_id", "_pinned", "thinking", "_responses_output"))
 
 def _clean_messages(messages):
     """Strip internal tracking keys before sending to any API."""
@@ -2053,7 +2108,9 @@ def _build_payload_anthropic(cfg, messages, stream=False):
     return payload
 
 def _api_headers(cfg):
-    if cfg.get("endpoint_type") == "anthropic":
+    if auth_provider(cfg) == "chatgpt":
+        raise RuntimeError("ChatGPT requires the separate Responses adapter.")
+    if auth_provider(cfg) == "anthropic":
         return {
             "Content-Type":      "application/json",
             "x-api-key":         cfg["api_key"],
@@ -2104,6 +2161,11 @@ def _with_retry(fn, retries=3):
 def _debug_print(label, obj):
     if not _DEBUG:
         return
+    try:
+        from shellclaude_auth import redact
+        obj = redact(obj)
+    except ImportError:
+        pass
     if _RICH:
         console.print(f"[bold magenta][DEBUG] {label}[/bold magenta]")
         console.print(Syntax(json.dumps(obj, indent=2), "json", theme="monokai",
@@ -2113,7 +2175,9 @@ def _debug_print(label, obj):
         print(json.dumps(obj, indent=2)[:8000])
 
 def api_call(cfg, messages, retries=3):
-    is_anthropic = cfg.get("endpoint_type") == "anthropic"
+    if auth_provider(cfg) == "chatgpt":
+        return _chatgpt_call(cfg, messages)
+    is_anthropic = auth_provider(cfg) == "anthropic"
     if is_anthropic:
         payload = _build_payload_anthropic(cfg, messages)
         url  = ANTHROPIC_API_URL
@@ -2200,7 +2264,9 @@ def _process_anthropic_chunk(chunk, text_buf, tool_blocks, counters):
 
 def api_call_stream(cfg, messages, retries=3):
     """Stream SSE, accumulate tokens, render Markdown at end via Rich Live."""
-    is_anthropic = cfg.get("endpoint_type") == "anthropic"
+    if auth_provider(cfg) == "chatgpt":
+        return _chatgpt_call(cfg, messages, streaming=True)
+    is_anthropic = auth_provider(cfg) == "anthropic"
     payload = (
         _build_payload_anthropic(cfg, messages, stream=True)
         if is_anthropic
@@ -2508,12 +2574,15 @@ def agent_loop(cfg, conn, sid, messages, user_msg):
             thinking, text = extract_thinking(text)
 
         asst_entry = {"role": "assistant", "content": text}
+        if msg.get("_responses_output"):
+            asst_entry["_responses_output"] = msg["_responses_output"]
         if thinking:
             asst_entry["thinking"] = thinking
         if tcalls:
             asst_entry["tool_calls"] = tcalls
         messages.append(asst_entry)
-        db_save_msg(conn, sid, "assistant", text, tcalls, thinking, cost=_LAST_MSG_COST)
+        db_save_msg(conn, sid, "assistant", text, tcalls, thinking, cost=_LAST_MSG_COST,
+                    responses_output=msg.get("_responses_output"))
 
         # Display thinking block separately if present
         if thinking:
@@ -2623,6 +2692,59 @@ def agent_loop(cfg, conn, sid, messages, user_msg):
     return messages
 
 
+def cmd_auth(cfg, command, arg):
+    """Interactive-only credential boundary; never registered as an agent tool."""
+    try:
+        if command == "auth" and arg.startswith("method"):
+            method = arg[len("method"):].strip()
+            if not method:
+                pr_info(f"Authentication: {auth_provider(cfg)}; choices: openai_api, anthropic, chatgpt")
+                return
+            if method not in ("openai_api", "anthropic", "chatgpt"):
+                raise RuntimeError("Usage: /auth method [openai_api|anthropic|chatgpt]")
+            cfg["auth_method"] = method
+            if method != "chatgpt":
+                cfg["endpoint_type"] = "anthropic" if method == "anthropic" else "openai"
+            save_cfg(cfg)
+            pr_info(f"Authentication → {method}. Choose a model with /model.")
+            return
+        auth = _chatgpt_auth()
+        if command == "login":
+            if arg.strip() not in ("", "new", "consent"):
+                raise RuntimeError("Usage: /login [new|consent]")
+            pr_info(auth.login(print, new=arg.strip() == "new", consent=arg.strip() == "consent"))
+            cfg["auth_method"] = "chatgpt"
+            save_cfg(cfg)
+            pr_info("ChatGPT provider selected. /model lists this account's available models.")
+        elif command == "logout":
+            pr_info(auth.logout())
+        elif arg.strip() in ("", "status"):
+            pr_info(f"Authentication: {auth_provider(cfg)}")
+            pr_info(auth.status())
+            pr_dim("ChatGPT plan usage is separate from API billing; no automatic billing fallback.")
+        elif arg.strip() == "accounts":
+            for a in auth.accounts().values():
+                pr_info(f"  {a['label']} {a.get('email', '')} ({'signed in' if a.get('id_token') else 'signed out'})")
+            pr_info("/auth account <label> selects a saved registration; /login new adds one.")
+        elif arg.startswith("account "):
+            auth.select(arg[len("account "):].strip())
+            pr_info(auth.status())
+            pr_info("Use /model to refresh account-specific model choices.")
+        elif arg.strip() == "probe":
+            from shellclaude_auth import Loopback
+            listener = Loopback(probe=True)
+            pr_info("Loopback test only (no login). Open in Safari while a-Shell stays visible:")
+            print(listener.uri)
+            listener.wait(timeout=120)
+            pr_info("Safari callback reached this listener. OAuth itself is not yet verified.")
+        else:
+            raise RuntimeError("Usage: /auth [status|method [provider]|accounts|account <label>|probe]")
+    except (RuntimeError, OSError) as e:
+        print_error(str(e))
+    except KeyboardInterrupt:
+        pr_dim("Authentication cancelled.")
+
+
 # CONFIG HELPERS
 def load_cfg():
     cfg = json.loads(json.dumps(DEFAULT_CFG))
@@ -2671,6 +2793,7 @@ def print_help():
         print("""shellclaude commands:
 
 Config & Setup:
+  /login [new|consent]  /logout  /auth [status|method|accounts|probe]
   /config [key=val]  /model <name>  /url <url>  /endpoint [openai|anthropic]
   /stream [on|off]
 
@@ -2698,6 +2821,9 @@ Notes: OPENAI_API_KEY > ANTHROPIC_API_KEY > config file · Auto-compact at ~200k
     rows = [
         ("/config",                      "Show config (key source in brackets)"),
         ("/config key=value",            "Set a config value"),
+        ("/login [new|consent]",          "Continue with ChatGPT"),
+        ("/logout",                       "Revoke session and remove tokens"),
+        ("/auth status|method|accounts|probe", "Authentication settings / loopback test"),
         ("/model <name>",                "Switch model"),
         ("/url <base_url>",              "Set API base URL (openai mode only)"),
         ("/endpoint [openai|anthropic]", "Switch endpoint type"),
@@ -2925,7 +3051,7 @@ def cmd_pick(arg, msgs, conn, sid):
 
 # BANNER
 def print_banner(cfg, sid):
-    ep  = cfg.get("endpoint_type", "openai")
+    ep  = auth_provider(cfg)
     src = cfg.get("_key_source", "none")
     if _RICH:
         from rich.columns import Columns
@@ -2983,13 +3109,14 @@ def main():
     _fetch_model_list(cfg)
 
     ep = cfg.get("endpoint_type", "openai")
-    if not cfg["api_key"]:
+    if auth_provider(cfg) != "chatgpt" and not cfg["api_key"]:
         pr_err("⚠  No API key found.")
         if ep == "anthropic":
             pr_err("   export ANTHROPIC_API_KEY=<key>  ← shell profile")
         else:
             pr_err("   export OPENAI_API_KEY=<key>     ← shell profile")
         pr_err("   /config api_key=<key>           ← stored in JSON config")
+        pr_info("   /login                         ← Continue with ChatGPT (optional)")
 
     try:
         real = os.path.realpath(CFG_PATH)
@@ -3032,6 +3159,9 @@ def main():
                 pr_dim("bye.")
                 break
 
+            elif cmd in ("login", "logout", "auth"):
+                cmd_auth(cfg, cmd, arg)
+
             elif cmd == "mcp":
                 cmd_mcp(arg, cfg)
 
@@ -3065,7 +3195,20 @@ def main():
                 cmd_config(cfg, arg)
 
             elif cmd == "model":
-                if arg:
+                if auth_provider(cfg) == "chatgpt":
+                    catalog = _fetch_model_list(cfg) or []
+                    if arg:
+                        if arg in {m["slug"] for m in catalog}:
+                            cfg["model"] = arg
+                            save_cfg(cfg)
+                            pr_info(f"Model → {arg}")
+                        else:
+                            pr_err("Choose a slug from /model for the active ChatGPT account.")
+                    else:
+                        pr_info(f"Current: {cfg['model']}")
+                        for m in catalog:
+                            pr_info(f"  {m['slug']} — {m['display_name']}")
+                elif arg:
                     cfg["model"] = arg
                     save_cfg(cfg)
                     pr_info(f"Model → {arg}")
@@ -3201,6 +3344,7 @@ def main():
                 val = arg.strip().lower()
                 if val in ("openai", "anthropic"):
                     cfg["endpoint_type"] = val
+                    cfg["auth_method"] = "anthropic" if val == "anthropic" else "openai_api"
                     save_cfg(cfg)
                     pr_info(f"Endpoint → {val}")
                     if val == "anthropic":
@@ -3737,7 +3881,7 @@ def main():
 
             continue
 
-        if not cfg["api_key"]:
+        if auth_provider(cfg) != "chatgpt" and not cfg["api_key"]:
             pr_err("No API key. Run: /config api_key=YOUR_KEY")
             continue
 

@@ -1,0 +1,3 @@
+# Optional login dependencies: pure Python, no compiled extensions.
+PyJWT>=2.10,<3
+rsa>=4.9.1,<5

@@ -3,26 +3,101 @@
 [![Python](https://img.shields.io/badge/Python-3.13-blue.svg)](https://www.python.org)
 ![Platform](https://img.shields.io/badge/Platform-iOS%20%2F%20iPadOS-brightgreen)
 
-Terminal coding tool for [a-Shell](https://github.com/holzschu/a-Shell). Supports OpenAI and Anthropic endpoints.
+Terminal coding tool for [a-Shell](https://github.com/holzschu/a-Shell). Supports OpenAI and Anthropic API-key endpoints, plus experimental official Sign in with ChatGPT.
 
 ## shellclaude v1.6.0
 
-## Quick start
+## ChatGPT 订阅登录（实验性，尚待 iPad 真机验证）
 
-```bash
-pip install rich
-cd ~/Documents
-curl -fsSL https://raw.githubusercontent.com/dav31012/shellclaude/main/shellclaude.py -o shellclaude.py
-# OpenAI-compatible endpoint
-export OPENAI_API_KEY=
-# Anthropic endpoint
-export ANTHROPIC_API_KEY=
-shellclaude.py
+本 fork 新增 `chatgpt` provider：通过官方 Sign in with ChatGPT 动态注册和 PKCE 登录，使用公开 Responses API 进行文本与本地工具调用。保留 `openai_api` 与 `anthropic` 的 API-key 路径，旧配置无需迁移。**没有执行过真实 OAuth 登录或订阅推理；Linux 测试通过不等于 iOS 可用。**
+
+需要符合 OpenAI 当前条件的 ChatGPT 账号／workspace（目标为有资格的 Plus／Pro 用户），并同意 `chatgpt.tokens.use.direct`。最终是否可用取决于账号、地区、workspace 策略和服务端授权。订阅用量与 API 账单是不同路径，不会自动改用 API key 计费；订阅也不意味着无限调用。查看 [ChatGPT 设置 → Usage](https://chatgpt.com/#settings/Usage) 管理应用用量与授权。
+
+### 在 App Store a-Shell 安装
+
+本实现分支：[feature/chatgpt-sign-in](https://github.com/xyxyx718/shellclaude/tree/feature/chatgpt-sign-in) · [下载完整 ZIP](https://github.com/xyxyx718/shellclaude/archive/refs/heads/feature/chatgpt-sign-in.zip)。
+
+使用 a-Shell 提供的 Python 3.13，不需要越狱、Node、Rust、Codex CLI、Docker 或远程服务器。
+
+从**包含本改动的分支／release**取得 `shellclaude.py`、`shellclaude_auth.py`、`shellclaude_responses.py` 与 `requirements-chatgpt.txt`，放在“我的 iPad → a-Shell”同一目录，例如 `~/Documents/shellclaude-chatgpt/`。可以直接解压本任务交付包；不要仅下载 upstream 的单文件来尝试新登录。
+
+```sh
+cd ~/Documents/shellclaude-chatgpt
+python3 --version
+python3 -m pip install rich
+python3 -m pip install -r requirements-chatgpt.txt
+python3 shellclaude.py
 ```
-First run sets up your model and endpoint. Settings save to `~/Documents/shellclaude/shellclaude.json`.
 
-# VERY IMPORTANT
-if you used shellclaude before 1.6.0 you'll have to move ~/Documents/shellclaude.json and ~/Documents/shellclaude.db to ~/Documents/shellclaude/
+`rich` 是原项目可选的显示依赖；新登录只增加纯 Python PyJWT、rsa 及 rsa 的 pyasn1 依赖。不要安装 `PyJWT[crypto]`，不需要编译扩展。只用旧 API-key provider 时，仍可继续单文件安装，不需新依赖。
+
+### 首次登录与模型选择
+
+先让 Safari 与 a-Shell 在 iPad 上分屏／多窗口同时可见，然后在 shellclaude 中输入：
+
+```text
+/auth probe
+/login
+/auth status
+/model
+/model <上一步返回的slug>
+/safe on
+```
+
+`/auth probe` 提供无凭据的本机连通性测试地址。在 Safari 打开后，终端应报告收到回调。它只验证当前布局的 TCP 连通性，不验证 OAuth。
+
+`/login` 显示 **Continue with ChatGPT** 和一次性授权链接。使用 Safari 打开并授权，自动回到 `127.0.0.1` 后返回 a-Shell 完成验证。请勿把链接或真实回调参数贴进日志／问题报告。登录成功会选择 ChatGPT provider；`/model` 每次读取所选账号目录，展示名称与可用 slug。
+
+首次注册使用应用名 shellclaude；重登录复用 issued client ID 和同一安装 host ID。若只获得身份登录、未授权订阅使用，`/auth status` 会提示禁用推理。可主动 `/login consent` 重新授权，或选择 API-key 路径。
+
+### 认证命令
+
+| 命令 | 功能 |
+|---|---|
+| `/login` | 登录／重新授权当前注册 |
+| `/login new` | 添加另一个账号／workspace 注册 |
+| `/login consent` | 主动重新请求使用订阅计划的授权 |
+| `/logout` | 尝试撤销当前会话并删除其本地 tokens |
+| `/auth status` | 查看状态，不显示 tokens |
+| `/auth method` | 查看认证方式 |
+| `/auth method chatgpt` | 使用已保存的 ChatGPT 登录 |
+| `/auth method openai_api` | 使用原 OpenAI-compatible API-key 路径 |
+| `/auth method anthropic` | 使用原 Anthropic API-key 路径 |
+| `/auth accounts` | 查看稳定账号标签和已验证邮箱（如有） |
+| `/auth account account-1` | 切换已保存注册；之后重新 `/model` |
+| `/auth probe` | 不登录，仅测试 Safari → loopback 连通性 |
+
+切换 provider 后使用 `/model` 选择该路径的模型。ChatGPT 的 `/url` 不影响固定官方推理地址；`/stream off` 只关闭即时显示，HTTP 仍按照协议流式读取。ChatGPT 不发送 temperature、max_tokens 或 max_output_tokens；这些设置仍适用于旧 provider。美元费用估算不是订阅用量。
+
+### 原 API-key 使用方式
+
+```text
+/endpoint openai
+/url https://api.openai.com/v1
+/config api_key=自己的API密钥
+/model 自己API账号可用的模型
+```
+
+Anthropic 使用 `/endpoint anthropic` 和自己的 key、model；也可继续通过 `OPENAI_API_KEY`／`ANTHROPIC_API_KEY` 环境变量配置。保留原来的环境变量优先级，环境密钥不保存到配置。此版本实际配置位置是 `~/Documents/shellclaude.json`，会话位置是 `~/Documents/shellclaude.db`；不要按照旧 README 说明移动它们。
+
+### 凭据与登出
+
+OAuth 资料独立保存在 `~/Library/Application Support/shellclaude/auth/`，尽可能使用 0700／0600 权限、原子写入与跨进程锁。它们不进入配置、会话 DB 或调试输出。access token 自动到期刷新，轮换后的 refresh token 一并替换。文件损坏时停止使用并提示恢复，网络暂时失败不会清除凭据。
+
+`/logout` 只退出当前注册；要退出所有账号，请逐个切换后登出。注册映射与 host ID 保留以便重登录。远程撤销未确认时会提示到 ChatGPT 设置断开应用。凭据文件未加密，也不是 Keychain；请勿共享、上传或放入 iCloud，系统备份行为仍需自行管理。
+
+### 已知限制与排错
+
+- **Safari 无法访问／回调超时**：iOS 可能暂停后台 a-Shell。先运行 probe，让两款应用同时可见，保持设备解锁；超时后用新的 `/login` 重试。线程不能解决系统暂停。iPhone 上可靠性风险更大。
+- **没有其他回调方式吗？** 目前这条官方动态注册流程只记载 `127.0.0.1` HTTP 回调。未加入未记载的 device-code、自定义 scheme 或粘贴回调方案。
+- **文件锁不支持**：为防止 refresh-token 轮换竞争，OAuth 会明确停止；请记录 a-Shell／iPadOS 版本，使用 API-key provider。不要移除锁强行继续。
+- **订阅权限禁用／401／403**：检查账号、授权 scope、地区与 workspace 策略；必要时显式 `/login` 或 `/login consent`。不会循环登录或偷偷切换 API 账单。
+- **用量限制**：暂停新请求，在 ChatGPT Settings → Usage 检查应用限额；不能仅凭错误码推断整个套餐耗尽或重置时间。
+- **503／网络故障**：稍后手动重试。推理 POST 与中断流不会自动重放；未收到 completed 时不会执行流中的工具调用。
+- **签名验证失败**：检查时间与网络；不能关闭验证绕过。当前实现只接受 RS256，协议算法变化需要更新实现。
+- **会话历史错误**：不要手动保留只有一半的工具调用／结果；必要时 `/new`。保留原有工具审批，建议 `/safe on`；已批准的任意代码仍拥有 a-Shell 用户权限。
+
+完整协议架构、安全边界、自动化测试与逐步真机验收见 [技术说明](docs/CHATGPT_AUTH.md)。
 
 ## Tools
 
