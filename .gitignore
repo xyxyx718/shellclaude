@@ -4,3 +4,5 @@ work/
 .venv/
 credentials.json
 host.json
+
+shellclaude-data/
