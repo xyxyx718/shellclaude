@@ -77,7 +77,22 @@ python3 shellclaude.py
 /model 自己API账号可用的模型
 ```
 
-Anthropic 使用 `/endpoint anthropic` 和自己的 key、model；也可继续通过 `OPENAI_API_KEY`／`ANTHROPIC_API_KEY` 环境变量配置。保留原来的环境变量优先级，环境密钥不保存到配置。此版本实际配置位置是 `~/Documents/shellclaude.json`，会话位置是 `~/Documents/shellclaude.db`；不要按照旧 README 说明移动它们。
+Anthropic 使用 `/endpoint anthropic` 和自己的 key、model；也可继续通过 `OPENAI_API_KEY`／`ANTHROPIC_API_KEY` 环境变量配置。保留原来的环境变量优先级，环境密钥不保存到配置。配置和会话现在统一保存在 `shellclaude.py` 旁的 `shellclaude-data/` 子目录中；历史版本升级会自动迁移，详见下节。
+
+### 数据目录与历史版本升级
+
+普通运行数据统一放在 **`shellclaude.py` 所在目录的 `shellclaude-data/`**，不是启动命令时的当前目录。例如脚本放在 `~/Documents/shellclaude.py` 时，数据位于 `~/Documents/shellclaude-data/`。切换项目或执行 `/cd` 不会换一套配置。
+
+**通常不需要手动迁移，也不需要重新登录。** 首次启动新版时会自动导入：
+
+- `~/Documents/shellclaude.json` 和 `~/Documents/shellclaude.db`；也兼容较早的 `~/Documents/shellclaude/` 内同名文件。两处都有时优先使用 Documents 根目录的版本。
+- `~/Documents/shellclaude/` 内的 allowlist、plugins、skills、snippets、personas。
+
+新目录已有的文件或资源目录不会被覆盖或合并。旧文件会保留作升级前备份；确认配置、会话及插件都正常后，退出旧实例，再自行删除不需要的旧文件即可。历史导出文件和临时文件不自动迁移，新导出默认保存到 `shellclaude-data/exports/`。
+
+会话迁移使用 SQLite backup，包含已提交但尚未 checkpoint 的 WAL 内容。迁移失败时停止启动并保留源文件；排除权限、配置损坏或数据库占用问题后重试。不要同时运行新旧版本。迁移成功后只使用新路径，不再从旧路径反复导入。非标准自定义路径仍需自行确认；以后移动安装目录时，请将 `shellclaude-data/` 和脚本一起移动。
+
+OAuth 凭据继续单独放在本机 Library，不放入项目目录；本次路径调整不改变已有 ChatGPT 登录。
 
 ### 凭据与登出
 
@@ -258,7 +273,7 @@ Uses `html.duckduckgo.com/html/` -- the stable static DDG page. No API key neede
 - **a-Shell safety**: Pipes, command substitution, background jobs, and here-strings are blocked. These hang a-Shell permanently because it runs everything in a single process.
 
 ### Session persistence
-SQLite at `~/Documents/shellclaude/shellclaude.db`:
+SQLite at `<script directory>/shellclaude-data/shellclaude.db`:
 - Full message history
 - Working directory restoration
 - Branching and tagging
@@ -299,10 +314,12 @@ Priority: `OPENAI_API_KEY` / `ANTHROPIC_API_KEY` env vars beat config file. Env 
 ## Directory layout
 
 ```
-~/Documents/shellclaude/
+<shellclaude.py 所在目录>/shellclaude-data/
 ├── shellclaude.json      # Config
 ├── shellclaude.db        # Session database
 ├── allowlist.txt         # Command allowlist
+├── .migration.sqlite3    # One-time legacy migration state / lock
+├── exports/              # Exported conversations
 ├── .tmp/                 # Temp files for run_c, run_cpp, run_python
 ├── plugins/              # Python plugin files
 ├── snippets/             # Saved responses
@@ -316,11 +333,11 @@ Check [plugins.md](https://github.com/Dav31012/shellclaude/blob/main/plugins.md)
 
 ## Skills
 
-Create `~/Documents/shellclaude/skills/<name>/SKILL.md`. Content gets injected into the system prompt under `## Skills`.
+Create `<脚本目录>/shellclaude-data/skills/<name>/SKILL.md`. Content gets injected into the system prompt under `## Skills`.
 
 ## Personas
 
-Drop `.md` files in `~/Documents/shellclaude/personas/`. Switch with `/persona <name>`.
+Drop `.md` files in `<脚本目录>/shellclaude-data/personas/`. Switch with `/persona <name>`.
 
 ## Security notes
 
