@@ -96,16 +96,18 @@ OAuth 凭据继续单独放在本机 Library，不放入项目目录；本次路
 
 ### 预置 a-Shell 平台 AGENTS.md
 
-首次启动会在 `shellclaude-data/AGENTS.md` 生成预置平台规则，无需额外下载，也不会在你的项目中创建或覆盖 AGENTS.md。规则明确区分 iOS 沙箱、Python 与 WASM 能力，以及 shellclaude 本身的命令过滤限制；避免建议 Linux 可执行文件、原生子进程、Bash 管道或后台服务器等不适合当前环境的做法。
+首次启动会在 `shellclaude-data/AGENTS.md` 生成预置平台规则，无需额外下载，也不会在你的项目中创建或覆盖 AGENTS.md。规则区分平台、具体运行时与 shellclaude 自身策略。依据用户提供的 a-Shell 真机报告修订：Node/npm、原生扩展、前台线程和 asyncio 不能被一概认定为不可用；命令存在、查询成功和完整项目可运行需分别验证。
 
 平台规则与项目规则分开：平台规则在每次 API 请求中附加，项目自己的 AGENTS.md 仍按当前目录向上查找并加载。自定义 system prompt、persona 或切换模型不会自动移除平台规则。这是给模型的运行提示，工具审批和硬性过滤仍由代码执行，不把 AGENTS.md 当作安全沙箱。
 
 - `/agents`：显示平台规则文件与当前项目规则来源。
-- 手动编辑 `shellclaude-data/AGENTS.md` 可以补充本机已验证的工具、路径和版本；已有文件不会在启动时被覆盖。
+- 手动编辑 `shellclaude-data/AGENTS.md` 可以补充本机已验证的工具、路径和版本。启动时仅自动升级内容完全匹配已知旧预置版本的文件；手动修改过的文件保留。
 - `/agents reload`：重新读取两份规则，包括同一路径文件的新修改。
 - 平台文件不存在、为空或不可读时，使用内置默认内容；要恢复预置文件，可退出程序后删除该文件，再启动。
 
 仓库内的 [defaults/AGENTS.md](defaults/AGENTS.md) 是可审阅的预置文本，主程序同时内置一份，保持原来的直接下载 Python 文件安装方式。
+
+真机审查同时发现并修复：patch_file 在读取与显示差异之前检查受保护／敏感路径，普通未放行补丁需审批；编译器即使返回 0，也必须生成非空目标才会尝试运行。缺 SDK 或运行失败会明确报告错误。C/C++ 封装仍会对已生成的临时目标调用 chmod，因此不能用于用户禁止修改权限的审计。
 
 ### 凭据与登出
 
@@ -132,7 +134,7 @@ shellclaude exposes these to the model:
 
 - **read_file** — read code or configs, with line ranges for big files
 - **write_file** — create or overwrite files (shows diff first, makes .bak)
-- **patch_file** — surgical edits, preferred over write_file for changes
+- **patch_file** — surgical edits with protected/sensitive-path checks and approval, preferred over write_file for changes
 - **run_command** — shell commands; pipes blocked for a-Shell compatibility
 - **search_files** — ripgrep across your project, respects .gitignore
 - **list_files** — directory listing, recursive capped at 3000 entries
@@ -283,7 +285,7 @@ Uses `html.duckduckgo.com/html/` -- the stable static DDG page. No API key neede
 - **Allowlist**: Auto-approve trusted commands with prefix wildcards (`cargo *`)
 - **Symlink checks**: Warns if config resolves outside ~/Documents
 - **Blocked patterns**: Dangerous constructs blocked -- rm -rf /, sudo, credential exfiltration, semicolon chaining, and more
-- **a-Shell safety**: Pipes, command substitution, background jobs, and here-strings are blocked. These hang a-Shell permanently because it runs everything in a single process.
+- **Execution policy**: shellclaude rejects some pipeline, substitution and background syntax via regex checks. These are application policies, not proof that a-Shell lacks the capability; the checks are not a complete shell parser or security sandbox.
 
 ### Session persistence
 SQLite at `<script directory>/shellclaude-data/shellclaude.db`:
