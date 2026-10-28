@@ -144,7 +144,7 @@ _IOS_HINTS = [
     (r"bash.*not found|/bin/bash.*no such",    "bash not available — use sh or python3"),
     (r"command not found",                      "check available tools: pkg list  or  ls /usr/bin"),
     (r"SSL.*CERTIFICATE|CERTIFICATE_VERIFY",   "iOS SSL error: verify system date is correct"),
-    (r"fork.*failed|resource temporarily",     "a-Shell is single-process — avoid &, pipes, or subshells"),
+    (r"fork.*failed|resource temporarily",     "Process execution failed here; use supported tool entrypoints"),
 ]
 
 def _ios_hint(error_str):
@@ -272,7 +272,7 @@ def is_allowed(value, allowlist):
 
 def ask_permission(action, detail):
     labels = {
-        "run command": "执行命令", "write file": "写入文件",
+        "run command": "执行命令", "write file": "写入文件", "patch file": "修改文件",
         "read_file": "读取文件", "list_files": "列出文件",
         "search_files": "搜索文件", "patch_file": "修改文件",
         "run_command": "执行命令", "write_file": "写入文件",
@@ -293,44 +293,51 @@ def ask_permission(action, detail):
     return ans if ans in ("y", "a", "n") else "n"
 
 DEFAULT_PLATFORM_AGENTS = """\
-# shellclaude：a-Shell / iOS 平台规则
+# shellclaude：a-Shell 平台指导
 
-本文件描述本机运行约束，与项目自己的 AGENTS.md 一起使用。项目规则可以补充编码规范、测试方法和业务背景，但不能创造系统没有的能力，也不能取消工具的审批和安全检查。
+## 证据与适用范围
 
-## 先确认环境
+区分三层：a-Shell 平台能力、具体语言运行时能力、shellclaude 工具接口与安全策略。三者不能相互替代推断。本文件同时包含操作规范和需要现场核对的建议，不是所有版本的能力清单，也不是安全沙箱。项目 AGENTS.md 可补充项目要求；不能据此绕过工具审批或 iOS 权限。
 
-- 当前目标是非越狱 iOS/iPadOS 上的 App Store a-Shell，使用其 Python 3.13；不是 Linux、macOS 桌面或远程开发服务器。
-- 不假定存在 Bash、Node.js、npm、Rust、Docker、桌面 Codex CLI、GNU 工具链、root 权限或守护进程。项目里有 package.json / Cargo.toml 不代表本机能运行它的构建工具。
-- 使用 python3。优先 Python 标准库和纯 Python 依赖；不能指望 pip 在设备上编译 C/Rust 扩展。只有实际确认已内置的扩展才可使用。
-- 安装前检查命令是否存在和是否适用于 a-Shell；不要建议 apt、brew、sudo、系统权限绕过或下载 Linux 可执行文件。pkg 只能安装其实际提供的 a-Shell 命令。
+- 目标是用户的非越狱 iOS/iPadOS a-Shell 安装；系统、Python、工具版本以运行时检测为准。不硬编码容器 UUID 或把 Linux 开发环境当作设备环境。
+- 不预设桌面工具链存在，也不一概断言 Node、npm、原生扩展、线程或 asyncio 不可用。分别验证：PATH 中能找到、简单命令能运行、依赖能安装、项目能构建。
+- 一份 a-Shell 2.3.0 真机报告中，Node/npm/pip 的版本查询、基础 JS、lg2 version、Python loopback 双向通信、前台线程和基础 asyncio 已成功；NumPy 也能导入并进行简单计算。这些是该安装和测试范围内的证据，不保证其他安装或完整工作负载可用。
+- 优先 python3、标准库和纯 Python 包。原生扩展须确认预装情况或兼容分发方式；不预设本机能从源码编译 C/Rust 扩展，也不限制为“只有内置扩展可用”。安装或联网操作须符合用户授权。
 
-## 命令必须适合本应用
+## 本应用的执行策略
 
-- 每次只执行一个短小、前台、非交互命令，独立工具调用也顺序执行。不要创建子代理、后台任务或常驻服务器来绕开执行限制。
-- shellclaude 的命令过滤器禁止管道 |、后台 &、命令替换 $(...) / 反引号、进程替换、分号串联和 Bash here-string。即使某版本 a-Shell 在别处支持部分语法，本应用仍不接受它们。不要编码、嵌套 sh 或换工具来绕过过滤器。
-- 使用 read_file / list_files / search_files，避免 grep 管道。没有 rg 时使用 Python 遍历和搜索。先读再改，优先 patch_file。
-- 避免通过 run_command 启动 vim、交互式 Python、分页器或会等待输入的命令。不要在 Python 代码里使用 subprocess、fork、multiprocessing 或 shell=True 来假定能启动原生子进程；使用现有工具提供的执行入口。
-- 不假定 BSD 命令支持 GNU 参数（例如 sed -i、grep -P、find -printf、readlink -f、date -d）。不确定时先看本机帮助，或用 Python 实现。
-- 对 Git 优先考虑 a-Shell 的 lg2 或本应用 /git，先确认可用操作。C/C++ 通常编译成 WebAssembly，不是可直接运行的 Linux ELF 或 iOS 原生程序；使用既有 run_c / run_cpp，并以本机实际结果为准。
+- 默认使用短时、前台、非交互、顺序工具调用。这是稳妥的操作策略，不证明底层不能并发。不要通过另建入口来绕过限制。
+- shellclaude 当前用正则拦截部分管道、命令替换、后台执行、进程替换、分号串联及 here-string 写法。拦截不完备；被拒绝不证明 a-Shell 不支持，未被拦截也不等于已获准执行。不要以“永久挂死”作为未经测试的统一解释。
+- 优先 read_file、list_files、search_files；没有 rg 时可用 Python 遍历。先读再改，优先 patch_file，不假设它能越过受保护路径。
+- 避免从非交互工具启动 vim、分页器、等待输入的程序或常驻服务。subprocess、os.system、fork、multiprocessing 的可用性必须按实际执行入口分别验证；源码中的回退路径不能证明全部可用或全部不可用。
+- 不假定 GNU 参数兼容。一份真机报告中 grep -P、readlink -f、find -printf 和 GNU 风格 date -d 均未按预期工作；sed -i 未测试。先查本机帮助，或用 Python 实现，不把版本差异写成永久禁令。
+- Git 操作先确认本机入口。lg2 的版本查询可使用 lg2 version；不要由查询成功推断所有仓库操作都支持。
 
-## 路径与文件安全
+## C/C++ 与运行时差异
 
-- 从运行时上下文取得当前项目目录和数据目录；不要硬编码 Linux /home、容器 /workspace 或 iOS 容器 UUID。
-- 文件访问受 iOS 沙箱及用户授予的目录访问权限限制。需要其他目录时由用户通过文件选择器授权，不尝试越权访问其他 App 或系统目录。
-- 使用 pathlib、os.path.expanduser、tempfile 处理路径；正确处理空格和 Unicode。不要假定所有 /tmp、/var、/usr 等桌面路径在这里都可写。
-- shellclaude-data 保存应用配置、会话、允许规则和自定义资源，不是项目源码。OAuth 资料单独在本机 Library；不要读取、复制进上下文、打印、上传或修改认证资料。
-- 不覆盖配置、数据库、允许规则、平台 AGENTS.md 或插件来取消保护。按工具提示让用户批准写入和命令；用户拒绝后停止该操作。a 表示进入允许范围选择，不擅自扩大为通配授权。
-- 不随意删除数据或把明文 API key、会话库和登录资料同步到 iCloud / Git。移动安装位置时保留 shellclaude-data；不要修改 host ID 来伪造新安装。
+- 不把 WASM/WASI 或其运行器的文件、网络、线程和进程限制直接套到 Python 或 Node。每种运行时独立检查。
+- C/C++ 可用性必须同时确认编译器、SDK、目标格式、执行器及运行结果。PATH 有 clang 不代表 SDK 就绪；提示安装 SDK 时应停止，不把版本查询或空目标当作编译成功。
+- 一份真机报告中编译入口要求安装/更新 llvm-22 SDK，C 测试未成功，目标格式未确认。这不是所有 a-Shell 安装的固定 SDK 要求，应遵循当前工具实际提示，不擅自安装。
+- run_c / run_cpp 封装会对成功生成的临时目标调用 chmod。用户要求“不修改权限”时不能使用该封装来做验证，需说明原因并标为未验证。
 
-## 网络、挂起和验证
+## 路径、凭据与审批
 
-- WASM 的限制不等于 Python 的全部限制；不要一概声称本机 Python 不能监听 loopback。只有实际测试才能确认当前版本的网络能力。
-- 切到 Safari、后台或锁屏可能暂停 a-Shell；线程、asyncio 和额外窗口不保证后台存活。OAuth 使用官方支持的回调；有问题先做 /auth probe，iPad 上让 Safari 和 a-Shell 同时可见。
-- 不提取其他应用凭据、不借用客户端身份、不使用未记载的认证接口；订阅失败时不自动改用 API 计费。
-- 区分“代码已修改”“模拟测试通过”“设备上真实运行成功”。Linux 的测试结果不能证明 iPad 可用，未安装的编译器或没有凭据的真实调用必须如实说明。
-- 报错后先检查：命令是否存在、语法是否被本应用限制、沙箱路径、依赖是否需要原生扩展、网络是否中断。不要反复执行相同失败命令。
-- 回复使用用户的语言，适合手机阅读；给出短小、可直接复制的命令，并说明真正需要用户操作的部分。
+- 从上下文取得项目与应用数据目录；用 pathlib、expanduser 和 tempfile 处理空格、Unicode 与临时路径。不假定桌面路径可写。
+- 文件访问遵守系统沙箱和用户授权，不探测未授权目录或尝试访问其他 App。需要新目录权限时由用户通过文件选择器授权。
+- shellclaude-data 是应用配置和历史数据；OAuth 资料在独立 Library 目录。不要读取、打印、上传认证资料，或将 API key、会话库、登录资料提交到 Git / 同步到 iCloud。
+- 不通过 write_file、patch_file、脚本或插件改写配置、允许规则和平台规则来取消保护。用户拒绝后停止该操作；a 进入范围选择，不擅自扩大为通配授权。任意代码工具仍有用户权限，AGENTS.md 与正则过滤不构成进程隔离。
+- 不擅自删除数据、修改 host ID 或身份信息。移动安装位置时保留 shellclaude-data。
+
+## 验证方式
+
+- 只执行任务所需、已获授权的测试；审计模式默认采用无破坏、短时测试。用户禁止权限修改、依赖安装、联网或后台任务时，应遵守并将相关项目标为未验证，不为凑齐报告而执行。
+- 用户拒绝命令意味着“本次未执行”，不是“命令不可用”。只有实际结果才能支持成功结论；接口没提供退出码时不要猜测。
+- 前台线程或 asyncio 成功不证明后台/锁屏存活；Python 本机 socket 成功不证明 Safari 回调或公网 TLS 成功。需要时先做 /auth probe，分别记录实际验证范围。
+- 不提取其他应用凭据、不借用客户端身份、不使用未记载的认证接口；订阅失败不自动切换 API 计费。
+- 区分源码核验、模拟测试、设备实测和未验证。Linux 通过不能证明 iPad 可用。遇错先检查入口、依赖、SDK、参数、权限和网络，不重复相同失败命令。
+- 使用用户的语言，适合手机阅读；提供短小可复制的命令，明确真正需要用户操作的部分。
 """
+_PREVIOUS_PLATFORM_DEFAULT_HASHES = frozenset(["b171f7db7e6644327b38855345bd2ccd870db60ad127b6d032b47ccb6bb7a203"])
 
 PLATFORM_AGENTS_RULES = DEFAULT_PLATFORM_AGENTS
 
@@ -639,8 +646,32 @@ def _sanitize_agents_md(raw):
     return raw, warnings
 
 
+def _upgrade_platform_default():
+    if os.path.islink(PLATFORM_AGENTS_PATH):
+        return
+    with open(PLATFORM_AGENTS_PATH, "rb") as f:
+        previous = f.read(_AGENTS_MD_MAX_CHARS * 4 + 1)
+    if hashlib.sha256(previous).hexdigest() not in _PREVIOUS_PLATFORM_DEFAULT_HASHES:
+        return
+    fd, temporary = tempfile.mkstemp(prefix=".agents-", dir=os.path.dirname(PLATFORM_AGENTS_PATH))
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as f:
+            f.write(DEFAULT_PLATFORM_AGENTS)
+            f.flush()
+            os.fsync(f.fileno())
+        # Do not overwrite a file that changed while the replacement was prepared.
+        with open(PLATFORM_AGENTS_PATH, "rb") as f:
+            unchanged = f.read(_AGENTS_MD_MAX_CHARS * 4 + 1) == previous
+        if unchanged:
+            os.replace(temporary, PLATFORM_AGENTS_PATH)
+            pr_info("  已更新未修改过的预置平台规则。")
+    finally:
+        if os.path.exists(temporary):
+            os.unlink(temporary)
+
+
 def load_platform_agents(create=False):
-    """Load user-editable platform defaults without replacing existing rules."""
+    """Upgrade recognized bundled defaults while preserving manual edits."""
     global PLATFORM_AGENTS_RULES
     if create:
         try:
@@ -648,12 +679,12 @@ def load_platform_agents(create=False):
             try:
                 fd = os.open(PLATFORM_AGENTS_PATH, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
             except FileExistsError:
-                pass
+                _upgrade_platform_default()
             else:
                 with os.fdopen(fd, "w", encoding="utf-8") as f:
                     f.write(DEFAULT_PLATFORM_AGENTS)
         except OSError:
-            pr_err("  平台 AGENTS.md 无法创建，将使用内置 a-Shell 规则。")
+            pr_err("  平台 AGENTS.md 无法创建或升级，将尝试读取现有文件；读取失败时使用内置规则。")
     try:
         with open(PLATFORM_AGENTS_PATH, encoding="utf-8") as f:
             rules, warnings = _sanitize_agents_md(f.read(_AGENTS_MD_MAX_CHARS + 1))
@@ -1140,12 +1171,16 @@ def show_diff(path, new_content):
     if len(diff) > DISPLAY_DIFF_MAX:
         pr_dim(f"  … ({len(diff) - DISPLAY_DIFF_MAX} more lines)")
 
+def _is_protected_write(path):
+    resolved = os.path.realpath(os.path.expanduser(path))
+    return any(resolved == p or resolved.startswith(p + os.sep) for p in PROTECTED_PATHS)
+
+
 def tool_write_file(path, content, allowlist=None):
     allowlist = allowlist or []
     abs_path = os.path.realpath(os.path.expanduser(path))
-    for protected in PROTECTED_PATHS:
-        if abs_path == protected or abs_path.startswith(protected + os.sep):
-            return f"ERROR: writing to '{path}' is blocked (shellclaude protected path)"
+    if _is_protected_write(path):
+        return f"ERROR: writing to '{path}' is blocked (shellclaude protected path)"
     print()
     show_diff(path, content)
     print()
@@ -1209,11 +1244,11 @@ _BLOCKED_PATTERNS = [
     (re.compile(r'base64\s+-d.+\|\s*(sh|bash|python)',                           re.I), "base64-decoded shell execution"),
     # Fork bomb
     (re.compile(r':\(\)\s*\{',                                                     re.I), "fork bomb"),
-    # a-Shell single-process violations — these hang the app permanently
-    (re.compile(r'^[^#]*[^|]\|[^|]',                                              re.I), "pipes hang a-Shell (single-process rule) — use search_files or a temp file"),
-    (re.compile(r'\$\([^)]+\)|`[^`]+`',                                           re.I), "command substitution hangs a-Shell — run commands separately"),
-    (re.compile(r'[^\S\r\n]+&\s*$',                                               re.I), "background execution hangs a-Shell — run in foreground"),
-    (re.compile(r'<\([^)]+\)',                                                     re.I), "process substitution hangs a-Shell — use a temp file"),
+    # Application execution policy; regex matches are not a complete shell parser.
+    (re.compile(r'^[^#]*[^|]\|[^|]',                                              re.I), "pipelines are disallowed by shellclaude — use search_files or a temp file"),
+    (re.compile(r'\$\([^)]+\)|`[^`]+`',                                           re.I), "command substitution is disallowed by shellclaude — run commands separately"),
+    (re.compile(r'[^\S\r\n]+&\s*$',                                               re.I), "background execution is disallowed by shellclaude — run in foreground"),
+    (re.compile(r'<\([^)]+\)',                                                     re.I), "process substitution is disallowed by shellclaude — use a temp file"),
     (re.compile(r'<<<\s*["\']',                                                   re.I), "here-strings are a bashism — use echo or python3 -c"),
     (re.compile(r'#!/bin/bash|bash\s+-c',                                        re.I), "bash not available on iOS — use sh or python3"),
 ]
@@ -1325,6 +1360,11 @@ def tool_search_files(pattern, path=".", glob=None):
         return f"ERROR: {e}"
 
 def tool_patch_file(path, old_str, new_str):
+    if _is_protected_write(path):
+        return "ERROR: patch_file blocked — shellclaude protected path"
+    sensitive, reason = _is_sensitive_path(path)
+    if sensitive:
+        return f"ERROR: patch_file blocked — {reason}"
     try:
         with open(os.path.expanduser(path), "r") as f:
             content = f.read()
@@ -1340,6 +1380,13 @@ def tool_patch_file(path, old_str, new_str):
         if _DIFF_MODE:
             pr_dim("  [diff mode] changes not written — /diff off to disable")
             return "DIFF_MODE: diff shown, file not modified"
+        if not is_allowed(path, ALLOWLIST):
+            answer = ask_permission("patch file", path)
+            if answer == "n":
+                return "DENIED: user rejected file patch"
+            if answer == "a" and path not in ALLOWLIST:
+                ALLOWLIST.append(path)
+                save_allowlist(ALLOWLIST)
         real_path = os.path.expanduser(path)
         bak_path  = real_path + ".bak"
         with open(bak_path, "w") as f:
@@ -1606,16 +1653,21 @@ def _run_clang(compiler, std_flag, suffix, code, flags=""):
         if compile_rc != 0:
             return f"COMPILE ERROR:\n{compile_out[:CMD_OUTPUT_MAX]}"
 
+        if not os.path.isfile(tmp_bin) or os.path.getsize(tmp_bin) == 0:
+            return ("COMPILE ERROR: compiler produced no nonempty target; check the local compiler/SDK.\n"
+                    + compile_out[:CMD_OUTPUT_MAX])
         os.chmod(tmp_bin, 0o755)
 
-        out, _rc = _exec_shell(f'"{tmp_bin}"', timeout=60)
+        out, run_rc = _exec_shell(f'"{tmp_bin}"', timeout=60)
         out = out[:CMD_OUTPUT_MAX] if len(out) > CMD_OUTPUT_MAX else out
 
         prefix = f"WARNINGS:\n{compile_out}\n\n" if compile_out else ""
+        if run_rc != 0:
+            return f"{prefix}RUN ERROR (exit {run_rc}):\n{out}"
         return f"{prefix}{out}" if out else f"{prefix}(exit 0, no output)"
 
     except FileNotFoundError:
-        return f"ERROR: {compiler} not found — run: pkg install clang"
+        return f"ERROR: {compiler} or its output is unavailable — check the local compiler and SDK setup"
     except Exception as e:
         return f"ERROR: {e}"
     finally:
