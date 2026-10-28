@@ -70,6 +70,7 @@ CFG_PATH = os.path.join(DATA_DIR, "shellclaude.json")
 DB_PATH = os.path.join(DATA_DIR, "shellclaude.db")
 ALLOWLIST_PATH = os.path.join(DATA_DIR, "allowlist.txt")
 EXPORTS_DIR = os.path.join(DATA_DIR, "exports")
+PLATFORM_AGENTS_PATH = os.path.join(DATA_DIR, "AGENTS.md")
 
 DEFAULT_CFG = {
     "api_key":        "",
@@ -104,7 +105,7 @@ TOOL_TMP_DIR = os.path.join(DATA_DIR, ".tmp")
 # Paths the agent is never allowed to write — prevents self-modification attacks
 PROTECTED_PATHS = frozenset(
     os.path.realpath(p) for p in (
-        CFG_PATH, DB_PATH, ALLOWLIST_PATH, PLUGINS_DIR,
+        CFG_PATH, DB_PATH, ALLOWLIST_PATH, PLUGINS_DIR, PLATFORM_AGENTS_PATH,
         os.path.join(DATA_DIR, ".migration.sqlite3"),
         os.path.expanduser("~/Library/Application Support/shellclaude/auth"),
     )
@@ -135,8 +136,8 @@ _IOS_HINTS = [
     (r"\bclang[^:]*not found",                 "install → pkg install llvm"),
     (r"\bwasm[^:]*not found",                  "install → pkg install wasm"),
     (r"'python'.*not found|python: command",   "use python3, not python"),
-    (r"\bnode[^:]*not found",                  "install → pkg install node"),
-    (r"\bnpm[^:]*not found",                   "install → pkg install node"),
+    (r"\bnode[^:]*not found",                  "Node is not assumed in a-Shell; check installed commands or use Python"),
+    (r"\bnpm[^:]*not found",                   "Node is not assumed in a-Shell; check installed commands or use Python"),
     (r"Permission denied",                      "iOS sandbox: writes allowed only inside ~/Documents, ~/Library/Caches, cwd"),
     (r"Operation not permitted",               "iOS entitlement limit — operation blocked by sandbox"),
     (r"No space left",                          "device storage full — check Files app"),
@@ -291,6 +292,48 @@ def ask_permission(action, detail):
         ans = "n"
     return ans if ans in ("y", "a", "n") else "n"
 
+DEFAULT_PLATFORM_AGENTS = """\
+# shellclaude：a-Shell / iOS 平台规则
+
+本文件描述本机运行约束，与项目自己的 AGENTS.md 一起使用。项目规则可以补充编码规范、测试方法和业务背景，但不能创造系统没有的能力，也不能取消工具的审批和安全检查。
+
+## 先确认环境
+
+- 当前目标是非越狱 iOS/iPadOS 上的 App Store a-Shell，使用其 Python 3.13；不是 Linux、macOS 桌面或远程开发服务器。
+- 不假定存在 Bash、Node.js、npm、Rust、Docker、桌面 Codex CLI、GNU 工具链、root 权限或守护进程。项目里有 package.json / Cargo.toml 不代表本机能运行它的构建工具。
+- 使用 python3。优先 Python 标准库和纯 Python 依赖；不能指望 pip 在设备上编译 C/Rust 扩展。只有实际确认已内置的扩展才可使用。
+- 安装前检查命令是否存在和是否适用于 a-Shell；不要建议 apt、brew、sudo、系统权限绕过或下载 Linux 可执行文件。pkg 只能安装其实际提供的 a-Shell 命令。
+
+## 命令必须适合本应用
+
+- 每次只执行一个短小、前台、非交互命令，独立工具调用也顺序执行。不要创建子代理、后台任务或常驻服务器来绕开执行限制。
+- shellclaude 的命令过滤器禁止管道 |、后台 &、命令替换 $(...) / 反引号、进程替换、分号串联和 Bash here-string。即使某版本 a-Shell 在别处支持部分语法，本应用仍不接受它们。不要编码、嵌套 sh 或换工具来绕过过滤器。
+- 使用 read_file / list_files / search_files，避免 grep 管道。没有 rg 时使用 Python 遍历和搜索。先读再改，优先 patch_file。
+- 避免通过 run_command 启动 vim、交互式 Python、分页器或会等待输入的命令。不要在 Python 代码里使用 subprocess、fork、multiprocessing 或 shell=True 来假定能启动原生子进程；使用现有工具提供的执行入口。
+- 不假定 BSD 命令支持 GNU 参数（例如 sed -i、grep -P、find -printf、readlink -f、date -d）。不确定时先看本机帮助，或用 Python 实现。
+- 对 Git 优先考虑 a-Shell 的 lg2 或本应用 /git，先确认可用操作。C/C++ 通常编译成 WebAssembly，不是可直接运行的 Linux ELF 或 iOS 原生程序；使用既有 run_c / run_cpp，并以本机实际结果为准。
+
+## 路径与文件安全
+
+- 从运行时上下文取得当前项目目录和数据目录；不要硬编码 Linux /home、容器 /workspace 或 iOS 容器 UUID。
+- 文件访问受 iOS 沙箱及用户授予的目录访问权限限制。需要其他目录时由用户通过文件选择器授权，不尝试越权访问其他 App 或系统目录。
+- 使用 pathlib、os.path.expanduser、tempfile 处理路径；正确处理空格和 Unicode。不要假定所有 /tmp、/var、/usr 等桌面路径在这里都可写。
+- shellclaude-data 保存应用配置、会话、允许规则和自定义资源，不是项目源码。OAuth 资料单独在本机 Library；不要读取、复制进上下文、打印、上传或修改认证资料。
+- 不覆盖配置、数据库、允许规则、平台 AGENTS.md 或插件来取消保护。按工具提示让用户批准写入和命令；用户拒绝后停止该操作。a 表示进入允许范围选择，不擅自扩大为通配授权。
+- 不随意删除数据或把明文 API key、会话库和登录资料同步到 iCloud / Git。移动安装位置时保留 shellclaude-data；不要修改 host ID 来伪造新安装。
+
+## 网络、挂起和验证
+
+- WASM 的限制不等于 Python 的全部限制；不要一概声称本机 Python 不能监听 loopback。只有实际测试才能确认当前版本的网络能力。
+- 切到 Safari、后台或锁屏可能暂停 a-Shell；线程、asyncio 和额外窗口不保证后台存活。OAuth 使用官方支持的回调；有问题先做 /auth probe，iPad 上让 Safari 和 a-Shell 同时可见。
+- 不提取其他应用凭据、不借用客户端身份、不使用未记载的认证接口；订阅失败时不自动改用 API 计费。
+- 区分“代码已修改”“模拟测试通过”“设备上真实运行成功”。Linux 的测试结果不能证明 iPad 可用，未安装的编译器或没有凭据的真实调用必须如实说明。
+- 报错后先检查：命令是否存在、语法是否被本应用限制、沙箱路径、依赖是否需要原生扩展、网络是否中断。不要反复执行相同失败命令。
+- 回复使用用户的语言，适合手机阅读；给出短小、可直接复制的命令，并说明真正需要用户操作的部分。
+"""
+
+PLATFORM_AGENTS_RULES = DEFAULT_PLATFORM_AGENTS
+
 DEFAULT_SYSTEM = """\
 You are shellclaude — an autonomous coding agent running inside a-Shell on iOS. \
 You have direct access to the filesystem, shell, and network via tools. You operate \
@@ -312,85 +355,10 @@ A question may only need phase 1. A bug fix cycles through all three repeatedly.
 A refactor may involve dozens of chained tool calls. Let what you learned from the \
 previous step drive the next one.
 
-## Environment: a-Shell on iOS
+## Platform guidance
 
-a-Shell is a full Unix-like terminal for iOS by Nicolas Holzschuch. It runs locally \
-on-device with no server required.
-
-- **Sandboxed filesystem**: You can only write to ~/Documents, ~/Library, and ~/tmp. \
-  The home directory ~ is redirected to ~/Documents/. Never attempt to write to system \
-  paths like /tmp, /var, /usr, /etc, /System, or the iOS root.
-- **Python 3.13** is pre-installed. Always use `python3` — never `python`. Install packages \
-  with `python3 -m pip install <pkg>` or `pip install <pkg>`. Pure-Python packages work \
-  reliably. Some compiled packages (NumPy, Pandas, SciPy) now work as of 2026 updates.
-- **Package manager**: `pkg install <name>` installs pre-compiled WASM commands from \
-  https://github.com/holzschu/a-Shell-commands. Check installed tools with `pkg list`, \
-  search available ones with `pkg search <name>`. There is no apt, brew, snap, or sudo.
-- **C/C++**: `clang` compiles to WebAssembly (WASM). Run binaries with `wasm a.out` or \
-  `./a.out`. WASM has no sockets, no fork, and no dynamic library loading.
-- **Shell**: POSIX-compatible sh, not bash. No bashisms. Use `#!/bin/sh` or `#!/usr/bin/env sh`. \
-  Never generate `bash -c` or `#!/bin/bash` — they will fail.
-- **Editors**: `vim` (with syntax highlighting), `pico` (simple editor), `ed`.
-- **Bookmarks**: `pickFolder` opens the iOS file picker to access other apps' sandboxes. \
-  `bookmark` saves the current directory, `showmarks` lists bookmarks, `jump <name>` or \
-  `cd ~<<name>` navigates to one.
-- **Multi-window**: On iPad, `newWindow` opens additional a-Shell windows. `exit` closes \
-  the current one.
-- **Shortcuts**: Deep Apple Shortcuts integration. Shortcuts run from `~shortcuts` by default. \
-  "In Extension" = lightweight, "In App" = full filesystem access.
-- **Network**: `curl`, `scp`, `sftp`, `ssh`, `ping`, `nslookup`, `whois` are available. \
-  `man <cmd>` shows documentation.
-- **Other languages**: `lua`, `js` (JavaScript), `perl`, `pdflatex`, `lualatex` (TeX with TikZ).
-- **Git**: Uses `lg2`, a libgit2 wrapper. Most operations work but some advanced features \
-  differ from standard git. The /git command is also available as a shortcut.
-- **Startup**: `.profile` runs automatically when opening a new window. Use it for env vars, \
-  aliases, and PATH modifications.
-- **UI**: `config` customizes fonts, colors, and cursor. `config -p` makes settings permanent.
-- **Accessibility**: Full VoiceOver support if enabled in iOS Settings.
-
-## The Single-Process Rule (Critical)
-
-a-Shell runs all shell builtins inside a single process. It cannot execute two commands \
-concurrently. This is a hard architectural limit, not a bug.
-
-Because of this, the following constructs are blocked and will not run:
-
-- **Pipes (`|`)** — `cmd1 | cmd2` tries to run two commands simultaneously. Use search_files \
-  (rg) to filter, or write output to a temp file and process it separately.
-- **Command substitution (`$(cmd)` or `` `cmd` ``)** — Tries to run a nested command \
-  concurrently. Run the inner command separately first, capture its output, then use it next.
-- **Background execution (`cmd &`)** — Tries to fork a new process. Run everything foreground.
-- **Process substitution (`<(cmd)`)** — Requires concurrent execution. Use a temp file or \
-  python3 instead.
-- **Here-strings (`<<< "text"`)** — A bashism the POSIX shell does not support. \
-  Use `echo "text" > file` or `python3 -c` instead.
-
-What does work:
-
-- **Sequential chains**: `cmd1 && cmd2` and `cmd1 || cmd2` work. Semicolon chains (`;`) \
-  are blocked by the safety filter — use `&&` or make separate run_command calls.
-- **Built-in tools**: search_files (rg), read_file, and list_files are native, safe, and \
-  never hang. Strongly prefer them over shell pipelines for file exploration and filtering.
-
-## BSD Coreutils, Not GNU
-
-iOS uses BSD-derived command-line tools, not GNU coreutils. Many Linux flags do not exist \
-or behave differently here. These are the most common mistakes:
-
-- **sed**: The `-i` flag requires an extension argument. For in-place editing with no backup, \
-  use `sed -i '' 's/old/new/' file`. Note the empty string `''` — without it, sed fails.
-- **grep**: No `-P` for Perl-compatible regex. Use `-E` for extended regex. There is no \
-  `--exclude-dir` — use the search_files tool with glob filters instead.
-- **date**: No `-d` for arbitrary date strings. Use `-v` for relative dates, e.g. \
-  `date -v-2d` for "2 days ago". No nanosecond precision (`%s%N`); only `%s` for epoch seconds.
-- **find**: `-regex` uses POSIX basic regex, not GNU extended. No `-printf` — use `-print` \
-  and process output with a built-in tool or python3 (remember: no pipes).
-- **readlink**: No `-f` for canonical absolute paths. Use `realpath` if available, or \
-  `python3 -c "import os; print(os.path.realpath('path'))"`.
-- **xargs**: No `-r` (no-run-if-empty). No `-d` for custom delimiters.
-- **sort**: No `-V` for version sorting.
-- **awk**: Works as expected (nawk/mawk style).
-- **head**, **tail**, **wc -l**: Work as expected.
+The a-Shell platform AGENTS.md is always included in the request, separately from \
+project rules. Follow its runtime constraints; do not assume a desktop environment.
 
 ## Core Rules
 
@@ -403,7 +371,7 @@ or behave differently here. These are the most common mistakes:
 - **Prefer reversible actions**: Avoid destructive operations (rm -rf, overwriting large \
   files, resetting git history) unless explicitly requested. When in doubt, stage changes \
   rather than commit.
-- **Run tools in parallel** when they are independent (e.g. reading multiple files simultaneously).
+- **Run tools sequentially** in a-Shell, including independent file operations.
 - **Use rg before reading whole files** when searching for a symbol, pattern, or string. \
   Read only the relevant sections.
 - **Be concise**: Lead with the result, not a plan. Do not narrate what you are about to do. \
@@ -433,9 +401,9 @@ or behave differently here. These are the most common mistakes:
 - **run_python**: Run a Python 3 snippet or script directly. Handles tracebacks cleanly. \
   Prefer over run_command for Python tasks.
 - **run_c**: Compile and run C code with clang (-std=c11 -Wall). Pass inline code or a file \
-  path. Compile errors shown separately. Use flags= for -lm, -O2, etc. Requires pkg install clang.
+  path. Compile errors shown separately. Use flags= for -lm, -O2, etc. Requires a compiler available in this a-Shell installation.
 - **run_cpp**: Compile and run C++ code with clang++ (-std=c++17 -Wall). Same interface as \
-  run_c. Prefer over run_command for C++ tasks. Requires pkg install clang.
+  run_c. Prefer over run_command for C++ tasks. Requires a compiler available in this a-Shell installation.
 - **list_files**: List directory contents. Use `recursive=True` sparingly — results capped \
   at 3000 entries and filtered by .gitignore.
 - **search_files**: rg-based search. Returns matching lines with line numbers. Much faster \
@@ -634,7 +602,8 @@ def find_agents_md(start_dir=None):
             break
         seen.add(d)
         candidate = os.path.join(d, "AGENTS.md")
-        if os.path.isfile(candidate):
+        if (os.path.isfile(candidate)
+                and os.path.realpath(candidate) != os.path.realpath(PLATFORM_AGENTS_PATH)):
             return candidate
         parent = os.path.dirname(d)
         if parent == d:
@@ -670,10 +639,34 @@ def _sanitize_agents_md(raw):
     return raw, warnings
 
 
-def load_agents_md(cfg):
+def load_platform_agents(create=False):
+    """Load user-editable platform defaults without replacing existing rules."""
+    global PLATFORM_AGENTS_RULES
+    if create:
+        try:
+            os.makedirs(os.path.dirname(PLATFORM_AGENTS_PATH), mode=0o700, exist_ok=True)
+            try:
+                fd = os.open(PLATFORM_AGENTS_PATH, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+            except FileExistsError:
+                pass
+            else:
+                with os.fdopen(fd, "w", encoding="utf-8") as f:
+                    f.write(DEFAULT_PLATFORM_AGENTS)
+        except OSError:
+            pr_err("  平台 AGENTS.md 无法创建，将使用内置 a-Shell 规则。")
+    try:
+        with open(PLATFORM_AGENTS_PATH, encoding="utf-8") as f:
+            rules, warnings = _sanitize_agents_md(f.read(_AGENTS_MD_MAX_CHARS + 1))
+        PLATFORM_AGENTS_RULES = rules.strip() or DEFAULT_PLATFORM_AGENTS
+    except (OSError, UnicodeError):
+        PLATFORM_AGENTS_RULES = DEFAULT_PLATFORM_AGENTS
+    return PLATFORM_AGENTS_RULES
+
+
+def load_agents_md(cfg, force=False):
     global AGENTS_MD_PATH, SYSTEM
     path = find_agents_md()
-    if path == AGENTS_MD_PATH:
+    if path == AGENTS_MD_PATH and not force:
         return path
     if path:
         try:
@@ -965,7 +958,7 @@ BASE_TOOL_DEFS = [
     {"type": "function", "function": {
         "name": "run_c",
         "description": (
-            "Compile and run C code using clang. Requires pkg install clang. "
+            "Compile and run C code using clang. Requires a compiler available in this a-Shell installation. "
             "Compiles with -std=c11 -Wall. Pass inline code or a file path. "
             "Compile errors and runtime output are returned separately. "
             "Use flags for extra compiler options (e.g. '-lm -O2')."
@@ -980,7 +973,7 @@ BASE_TOOL_DEFS = [
     {"type": "function", "function": {
         "name": "run_cpp",
         "description": (
-            "Compile and run C++ code using clang++. Requires pkg install clang. "
+            "Compile and run C++ code using clang++. Requires a compiler available in this a-Shell installation. "
             "Compiles with -std=c++17 -Wall. Pass inline code or a file path. "
             "Compile errors and runtime output are returned separately. "
             "Use flags for extra compiler options (e.g. '-lm -O2')."
@@ -2069,6 +2062,11 @@ _SKILLS_TOTAL_MAX_CHARS = 16000  # all skills combined
 def _sys_prompt(cfg):
     fmt = cfg.get("format", "none")
     base = SYSTEM
+    base += ("\n\n[Platform AGENTS.md — a-Shell runtime guidance]\n"
+             + PLATFORM_AGENTS_RULES
+             + "\n[/Platform AGENTS.md]\n"
+             + "Runtime project directory: " + os.getcwd()
+             + "\nApplication data directory (not project source): " + DATA_DIR + "\n")
     if SKILLS_REGISTRY:
         skills_block = "\n\n## Skills\n\nThe following skill guides are loaded and available to you:\n\n"
         total_chars  = 0
@@ -3216,6 +3214,7 @@ def main():
         # Never silently start with empty history/settings after a failed migration.
         print_error("数据目录初始化或旧数据迁移失败，原文件未改动。请检查文件权限、旧配置 JSON、数据库和是否有其他实例正在运行后重试。")
         return
+    load_platform_agents(create=True)
     cfg  = load_cfg()
     global PLUGIN_REGISTRY, ALLOWLIST, SYSTEM, SESSION_COST, _current_model, SKILLS_REGISTRY
     SYSTEM = cfg.get("system") or DEFAULT_SYSTEM
@@ -3534,16 +3533,17 @@ def main():
                     pr_dim(out[:DISPLAY_PREVIEW_MAX])
 
             elif cmd == "agents":
-                if AGENTS_MD_PATH:
-                    pr_info(f"  AGENTS.md: {AGENTS_MD_PATH}")
-                    pr_dim(f"  Reload with /agents reload")
-                else:
-                    pr_dim("  No AGENTS.md found in this directory tree.")
-                    pr_dim("  Create one to define project rules and coding style.")
                 if arg.strip().lower() == "reload":
-                    load_agents_md(cfg)
-                    if AGENTS_MD_PATH:
-                        pr_info("  ✓ Reloaded")
+                    load_platform_agents()
+                    load_agents_md(cfg, force=True)
+                    pr_info("  已重新加载平台和项目规则。")
+                pr_info(f"  平台规则：{PLATFORM_AGENTS_PATH}")
+                pr_dim("  未创建或无法读取平台文件时自动使用内置规则。")
+                if AGENTS_MD_PATH:
+                    pr_info(f"  项目规则：{AGENTS_MD_PATH}")
+                else:
+                    pr_dim("  当前目录树中没有项目 AGENTS.md，可另建一份补充项目规则。")
+                pr_dim("  手动编辑规则后用 /agents reload 重新加载。")
 
             elif cmd == "allowlist":
                 cmd_allowlist(arg)
