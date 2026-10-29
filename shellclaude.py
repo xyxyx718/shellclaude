@@ -698,7 +698,7 @@ def load_platform_agents(create=False):
     """Upgrade recognized bundled defaults while preserving manual edits."""
     global PLATFORM_AGENTS_RULES
     if not DEFAULT_PLATFORM_AGENTS and not os.path.isfile(PLATFORM_AGENTS_PATH):
-        raise RuntimeError("缺少 defaults/AGENTS.md，请运行 python3 install.py 补齐安装。")
+        raise RuntimeError("缺少 defaults/AGENTS.md，请运行 sh install.sh 补齐安装。")
     if create and DEFAULT_PLATFORM_AGENTS:
         try:
             os.makedirs(os.path.dirname(PLATFORM_AGENTS_PATH), mode=0o700, exist_ok=True)
@@ -718,7 +718,7 @@ def load_platform_agents(create=False):
     except (OSError, UnicodeError):
         PLATFORM_AGENTS_RULES = DEFAULT_PLATFORM_AGENTS
     if not PLATFORM_AGENTS_RULES:
-        raise RuntimeError("平台规则不可读，请运行 python3 install.py 补齐 defaults/AGENTS.md。")
+        raise RuntimeError("平台规则不可读，请运行 sh install.sh 补齐 defaults/AGENTS.md。")
     return PLATFORM_AGENTS_RULES
 
 

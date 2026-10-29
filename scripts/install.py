@@ -18,11 +18,13 @@ from urllib.request import Request, urlopen
 REPOSITORY = "xyxyx718/shellclaude"
 DEFAULT_REF = "feature/chatgpt-sign-in"
 FILES = (
-    "shellclaude.py", "install.py", "install.sh", "requirements-chatgpt.txt", "README.md",
+    "shellclaude.py", "scripts/install.py", "install.sh", "requirements-chatgpt.txt", "README.md",
     "shellclaude_lib/__init__.py", "shellclaude_lib/auth.py", "shellclaude_lib/responses.py",
     "defaults/AGENTS.md", "defaults/agents-history.json",
 )
 LEGACY_MODULE_HASHES = {'shellclaude_auth.py': '26a8ad00e0b3c7a76ec5932917bad43db22fc8987c63c6503612991deba1ad7e', 'shellclaude_responses.py': 'c8967a7ff45f7924f39a0fa8e143819e4ec5b917d76f33d7db5a5e649e796286'}
+
+LEGACY_INSTALLER_HASHES = ['17847fe12544cf2ed0c2eecfd8667704a753141b5d097c166402f01fe15c8e18', '278db0dd5a6a7c5a180a7a0a678c6c947ca43623014841fb977557d4b85b4996', 'c0bf941baca119f6300462ff83d0b63ae47031d56a59d368f879512abbc7f5f8']
 
 
 def download(url):
@@ -115,6 +117,12 @@ def install(destination, ref=DEFAULT_REF):
                     shutil.copy2(target, backup)
                     previous[relative] = backup
                     obsolete.append(relative)
+            legacy_installer = destination / "install.py"
+            if legacy_installer.is_file() and not legacy_installer.is_symlink() and hashlib.sha256(legacy_installer.read_bytes()).hexdigest() in LEGACY_INSTALLER_HASHES:
+                backup = staging / "old" / "install.py"
+                shutil.copy2(legacy_installer, backup)
+                previous["install.py"] = backup
+                obsolete.append("install.py")
             try:
                 for relative in FILES:
                     # Include this path before replacing, so a partial write also rolls back.
@@ -148,7 +156,7 @@ def install(destination, ref=DEFAULT_REF):
 
 def main():
     parser = argparse.ArgumentParser(description="安装或更新 shellclaude（保留配置、会话和自定义规则）")
-    parser.add_argument("--dir", default=str(Path(__file__).resolve().parent), help="安装目录，默认安装脚本所在目录")
+    parser.add_argument("--dir", default=str(Path(__file__).resolve().parents[1]), help="安装目录，默认 scripts 的上一级目录")
     parser.add_argument("--ref", default=DEFAULT_REF, help="GitHub 分支、标签或提交")
     args = parser.parse_args()
     try:

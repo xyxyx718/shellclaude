@@ -11,7 +11,7 @@ import sys
 import unittest
 from unittest.mock import patch
 
-import install as installer
+from scripts import install as installer
 import shellclaude as app
 
 COMMIT = "a" * 40
@@ -23,7 +23,7 @@ class InstallerTests(unittest.TestCase):
         self.addCleanup(self.temp.cleanup)
         self.target = Path(self.temp.name) / "app"
         self.target.mkdir()
-        root = Path(installer.__file__).resolve().parent
+        root = Path(installer.__file__).resolve().parents[1]
         self.bodies = {name: (root / name).read_bytes() for name in installer.FILES}
         self.urls = []
 
@@ -126,15 +126,15 @@ class InstallerTests(unittest.TestCase):
         self.assertEqual((self.target / "shellclaude_responses.py").read_text(), "# custom legacy module")
 
     def test_shell_bootstrap_downloads_and_runs_installer(self):
-        root = Path(installer.__file__).resolve().parent
+        root = Path(installer.__file__).resolve().parents[1]
         bin_dir = Path(self.temp.name) / "bin"
         bin_dir.mkdir()
         curl = bin_dir / "curl"
         curl.write_text("#!" + sys.executable + "\n" +
             "import sys\nfrom pathlib import Path\n" +
             "assert 'api.github.com' not in ' '.join(sys.argv)\n" +
-            "assert sys.argv[-2:] == ['-o', 'install.py']\n" +
-            "Path('install.py').write_text(\"from pathlib import Path\\nPath('executed').write_text('ok')\\n\")\n")
+            "assert sys.argv[-2:] == ['-o', 'scripts/install.py']\n" +
+            "Path('scripts/install.py').write_text(\"from pathlib import Path\\nPath('executed').write_text('ok')\\n\")\n")
         curl.chmod(0o700)
         env = dict(os.environ, PATH=str(bin_dir) + os.pathsep + os.environ['PATH'], PYTHON=sys.executable)
         result = subprocess.run(['sh', str(root / 'install.sh')], cwd=self.target,
@@ -148,6 +148,22 @@ class InstallerTests(unittest.TestCase):
                                 env=env, capture_output=True, text=True, timeout=30)
         self.assertNotEqual(result.returncode, 0)
         self.assertFalse((self.target / 'executed').exists())
+
+    def test_legacy_root_installer_cleanup_preserves_modified_files(self):
+        legacy = self.target / "install.py"
+        legacy.write_bytes(b"# old stock installer")
+        digest = hashlib.sha256(legacy.read_bytes()).hexdigest()
+        with patch.object(installer, "LEGACY_INSTALLER_HASHES", [digest]):
+            self.run_install()
+        self.assertFalse(legacy.exists())
+        legacy.write_text("# custom installer")
+        self.run_install()
+        self.assertEqual(legacy.read_text(), "# custom installer")
+
+    def test_default_destination_is_above_scripts(self):
+        with patch.object(sys, 'argv', ['install.py']), patch.object(installer, 'install', return_value='fixture') as run, contextlib.redirect_stdout(io.StringIO()):
+            self.assertEqual(installer.main(), 0)
+        self.assertEqual(Path(run.call_args.args[0]), Path(installer.__file__).resolve().parents[1])
 
     def test_rules_are_not_literal_text_in_main_source(self):
         source = Path(app.__file__).read_text()
@@ -163,7 +179,7 @@ class InstallerTests(unittest.TestCase):
 
     def test_missing_distribution_and_custom_rules_give_install_instruction(self):
         with patch.object(app, "DEFAULT_PLATFORM_AGENTS", ""), patch.object(app, "PLATFORM_AGENTS_PATH", str(self.target / "missing.md")):
-            with self.assertRaisesRegex(RuntimeError, "install.py"):
+            with self.assertRaisesRegex(RuntimeError, "install.sh"):
                 app.load_platform_agents(create=True)
 
 

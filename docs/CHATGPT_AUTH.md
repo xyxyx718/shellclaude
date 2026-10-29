@@ -32,7 +32,7 @@ a-Shell 项目中有 Python HTTP 服务器的使用记录，说明不能简单�
 - `shellclaude_lib/responses.py`：Responses 消息转换、namespace 工具、模型目录和 SSE 解析。
 - `shellclaude.py`：仅接入 provider、终端命令及会话记录，继续使用现有 agent loop、工具分发、AGENTS.md、审批和工具结果处理。
 
-新模块按需导入，所有程序文件通过 install.sh 与 install.py 统一安装／更新，平台规则从独立 defaults/AGENTS.md 读取。ChatGPT 模式需要shellclaude_lib 内的模块与两个可选的纯 Python 包：PyJWT、rsa（后者依赖纯 Python pyasn1）。不使用 `PyJWT[crypto]` 或自己编写 RSA 运算。签名先由 rsa 校验，并严格要求 RS256/SHA-256，再用 PyJWT 校验 claims；不接受 `none`、HS256 或动态算法降级。如果官方改用其他算法，会停止登录，而非忽略签名。
+新模块按需导入，所有程序文件通过 install.sh 与 scripts/install.py 统一安装／更新，平台规则从独立 defaults/AGENTS.md 读取。ChatGPT 模式需要shellclaude_lib 内的模块与两个可选的纯 Python 包：PyJWT、rsa（后者依赖纯 Python pyasn1）。不使用 `PyJWT[crypto]` 或自己编写 RSA 运算。签名先由 rsa 校验，并严格要求 RS256/SHA-256，再用 PyJWT 校验 claims；不接受 `none`、HS256 或动态算法降级。如果官方改用其他算法，会停止登录，而非忽略签名。
 
 ## 登录和凭据边界
 
@@ -118,4 +118,4 @@ iPhone 无法保证两款应用同时保持前台，首次 OAuth 的可靠性风
 
 ## 仓库所有者操作
 
-审查并提交新增模块、测试和文档；发布包含 install.py、程序模块和 defaults 目录的分支／release，再把 README 的发布引用更新为实际引用。完成上述真机检查后记录结果和版本，才可将“实验性／未验证”标记改成对应的已验证范围。当前实现不要求申请另一个应用的 client ID，不需要 client secret，也不应导入 Codex CLI 凭据。
+审查并提交新增模块、测试和文档；发布包含 scripts/install.py、程序模块和 defaults 目录的分支／release，再把 README 的发布引用更新为实际引用。完成上述真机检查后记录结果和版本，才可将“实验性／未验证”标记改成对应的已验证范围。当前实现不要求申请另一个应用的 client ID，不需要 client secret，也不应导入 Codex CLI 凭据。
