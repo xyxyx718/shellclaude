@@ -15,10 +15,9 @@ Terminal coding tool for [a-Shell](https://github.com/holzschu/a-Shell). Support
 
 ### Quick start：统一安装和更新
 
-已有安装请先退出 shellclaude，再在原安装目录执行；新安装可使用 `~/Documents`：
+请在选定的 shellclaude 安装目录执行以下命令。已有安装请先退出程序，并在原安装目录更新：
 
 ```sh
-cd ~/Documents
 curl -fsSL https://raw.githubusercontent.com/xyxyx718/shellclaude/feature/chatgpt-sign-in/install.sh -o install.sh
 sh install.sh
 python3 shellclaude.py
