@@ -3,7 +3,7 @@
 [![Python](https://img.shields.io/badge/Python-3.13-blue.svg)](https://www.python.org)
 ![Platform](https://img.shields.io/badge/Platform-iOS%20%2F%20iPadOS-brightgreen)
 
-Terminal coding tool for [a-Shell](https://github.com/holzschu/a-Shell). Supports OpenAI and Anthropic API-key endpoints, plus experimental official Sign in with ChatGPT.
+Terminal coding tool for [a-Shell](https://github.com/holzschu/a-Shell). Supports DeepSeek, OpenAI and Anthropic API-key endpoints, plus experimental official Sign in with ChatGPT.
 
 ## shellclaude v1.6.0
 
@@ -67,6 +67,35 @@ python3 shellclaude.py
 | `/auth probe` | 不登录，仅测试 Safari → loopback 连通性 |
 
 切换 provider 后使用 `/model` 选择该路径的模型。ChatGPT 的 `/url` 不影响固定官方推理地址；`/stream off` 只关闭即时显示，HTTP 仍按照协议流式读取。ChatGPT 不发送 temperature、max_tokens 或 max_output_tokens；这些设置仍适用于旧 provider。美元费用估算不是订阅用量。
+
+### DeepSeek 官方 API
+
+更新主程序后，在 shellclaude 中设置：
+
+```text
+/endpoint deepseek
+/config deepseek_api_key=你的DeepSeek_API_key
+/model
+```
+
+已自动使用 `https://api.deepseek.com`，默认模型为 `deepseek-flash`。`/model` 从官方 API 读取当前模型列表，也可 `/model deepseek-v4-pro` 选择列表中的其他模型。不需要手动 `/url`，DeepSeek 模式固定使用官方地址。
+
+也可以启动前在 a-Shell 中设置 `export DEEPSEEK_API_KEY=你的密钥`，它优先于配置且不写入文件。DeepSeek key 单独保存为 `deepseek_api_key`，不会复用或覆盖 OpenAI／Anthropic key。
+
+默认开启思考模式，支持流式输出和多步工具调用，完整保存并回传 `reasoning_content`。恢复会话后仍能续接；切换到其他 provider 时会剥离该专用字段。可调整：
+
+```text
+/config deepseek_thinking=disabled
+/config deepseek_thinking=enabled
+/config deepseek_reasoning_effort=high
+/config max_tokens=32768
+```
+
+思考力度可选 low、high、max；关闭思考后力度设置不发送。输出预算由 max_tokens 控制，包含思考开销；截断或断流不会执行不完整工具调用。DeepSeek 请求不自动重放，余额不足、认证或限流错误会明确提示。
+
+仅使用 DeepSeek 时只需 `shellclaude.py`，无需 OpenAI SDK、OAuth 模块或新依赖。`/auth method deepseek` 也可切换；`/auth status` 查看状态。使用 DeepSeek 平台的 API 额度计费，与 ChatGPT 订阅无关。
+
+实现依据：[官方接入说明](https://api-docs.deepseek.com/)、[思考模式与工具调用](https://api-docs.deepseek.com/guides/thinking_mode/)、[模型目录](https://api-docs.deepseek.com/api/list-models/)。
 
 ### 原 API-key 使用方式
 
@@ -154,7 +183,7 @@ Cancel a running turn with `c` + Enter.
 | `/config [key=val]` | Show or change settings |
 | `/model <name>` | Switch model |
 | `/url <base_url>` | Set API URL (OpenAI mode) |
-| `/endpoint [openai\|anthropic]` | Switch provider |
+| `/endpoint [openai\|anthropic\|deepseek]` | Switch provider |
 | `/stream [on\|off]` | Toggle streaming |
 | `/debug [on\|off]` | Print full API traffic |
 
