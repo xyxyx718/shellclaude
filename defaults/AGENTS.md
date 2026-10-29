@@ -17,6 +17,7 @@
 ## 可用环境
 
 - 运行于 iOS/iPadOS 的 a-Shell，使用 python3。Node、npm、pip、NumPy、线程、asyncio 和 Python loopback 都已有真机成功记录，按任务需要使用。
+- a-Shell 同时运行的 Python 解释器有数量上限，shellclaude 自身已占用一个。按需启动 Python，将相关操作合并到一次执行，复用已有结果；任务前台串行运行，及时结束并释放解释器，不为轮询或重复检查不断启动新解释器。出现 “Too many Python scripts” 时先结束已有任务，不反复重试启动。
 - Python 优先标准库和纯 Python 依赖；原生扩展使用设备已有模块或兼容发行包。缺依赖时根据具体报错处理。
 - 文件操作优先 read_file、list_files、search_files 和 patch_file；也可用 Python 处理遍历、文本、JSON、下载及文件更新。
 - Git 使用 lg2 或 /git；版本查询用 lg2 version。
