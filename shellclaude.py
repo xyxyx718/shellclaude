@@ -315,9 +315,10 @@ def ask_permission(action, detail):
     pr_tool(f"\n  ⚠  {label}：")
     pr_dim(f"     {detail[:DISPLAY_DETAIL_MAX]}")
     try:
-        ans = input("  是否允许？y=允许一次 / a=始终允许 / n=拒绝（默认）：").strip().lower()
+        ans = input("  是否允许？1=允许一次 / 2=始终允许 / 3=拒绝（默认）；也可输入 y/a/n：").strip().lower()
     except (KeyboardInterrupt, EOFError):
         ans = "n"
+    ans = {"1": "y", "2": "a", "3": "n"}.get(ans, ans)
     return ans if ans in ("y", "a", "n") else "n"
 
 def _distribution_text(relative):
@@ -2642,9 +2643,9 @@ def _classify_phase(name, args_str):
     return "gather"
 
 _PHASE_LABELS = {
-    "gather":  ("◎ gathering context", "dim cyan"),
-    "act":     ("◈ acting",            "yellow"),
-    "verify":  ("◉ verifying",         "green"),
+    "gather":  ("◎ 收集信息", "dim cyan"),
+    "act":     ("◈ 执行操作",            "yellow"),
+    "verify":  ("◉ 验证结果",         "green"),
 }
 
 def print_phase(phase):
@@ -2653,6 +2654,75 @@ def print_phase(phase):
         console.print(f"[{color}]{label}[/{color}]", style="dim")
     else:
         print(f"\033[90m{label}\033[0m", flush=True)
+
+# Presentation only: full results remain in conversation history and the database.
+_TOOL_DETAILS = []
+_TOOL_LABELS = {
+    "read_file": "读取文件", "write_file": "写入文件", "patch_file": "修改文件",
+    "list_files": "列出文件", "search_files": "搜索文件", "run_command": "执行命令",
+    "run_python": "运行 Python", "run_c": "运行 C", "run_cpp": "运行 C++",
+    "web_search": "搜索网页", "read_url": "读取网页",
+}
+
+
+def tool_summary(name, arguments):
+    try:
+        args = json.loads(arguments) if isinstance(arguments, str) else arguments
+        if not isinstance(args, dict):
+            args = {}
+    except (ValueError, TypeError):
+        args = {}
+    detail = next((str(args[k]) for k in ("cmd", "path", "pattern", "query", "url") if args.get(k)), "")
+    detail = " ".join(_redact_secrets(detail).split())
+    return _TOOL_LABELS.get(name, name) + ("：" + detail[:120] if detail else "")
+
+
+def show_tool_result(name, arguments, result):
+    arguments, result = _redact_secrets(str(arguments)), _redact_secrets(str(result))
+    _TOOL_DETAILS.append((name, arguments, result))
+    del _TOOL_DETAILS[:-30]
+    number = len(_TOOL_DETAILS)
+    failed = result.startswith(("ERROR:", "DENIED:", "RUN ERROR"))
+    if failed:
+        print_error(result[:500])
+    else:
+        lines = result.splitlines()
+        preview = " ".join(lines[:2])[:180] or "完成"
+        pr_dim("  ✓ " + preview)
+    pr_dim(f"  /details {number} 查看完整记录")
+
+
+def show_tool_details(argument=""):
+    if not _TOOL_DETAILS:
+        pr_dim("当前还没有工具记录。")
+        return
+    try:
+        index = int(argument) if argument.strip() else len(_TOOL_DETAILS)
+        if not 1 <= index <= len(_TOOL_DETAILS):
+            raise ValueError
+    except ValueError:
+        pr_err(f"请输入 /details 1 到 /details {len(_TOOL_DETAILS)}")
+        return
+    name, arguments, result = _TOOL_DETAILS[index - 1]
+    # Plain text prevents tool output from becoming Rich markup.
+    print(f"\n{tool_summary(name, arguments)}\n参数：{arguments}\n结果：\n{result}", flush=True)
+
+
+def read_multiline():
+    pr_info("多行输入：单独输入 /send 发送，/cancel 放弃。")
+    lines = []
+    try:
+        while True:
+            line = input("… ")
+            if line == "/send":
+                return "\n".join(lines).strip()
+            if line == "/cancel":
+                return ""
+            lines.append(line)
+    except (KeyboardInterrupt, EOFError):
+        pr_dim("已放弃本次输入。")
+        return ""
+
 
 def _detect_stuck(tool_history):
     """Return True if the last N tool calls are all identical (stuck loop)."""
@@ -2671,6 +2741,7 @@ def agent_loop(cfg, conn, sid, messages, user_msg):
     max_iters    = _TURN_BUDGET if _TURN_BUDGET is not None else MAX_ITERS
     _TURN_BUDGET = None
     tool_history = []
+    _TOOL_DETAILS.clear()
     _last_phase  = None
 
     for iteration in range(max_iters):
@@ -2717,7 +2788,7 @@ def agent_loop(cfg, conn, sid, messages, user_msg):
                     responses_output=msg.get("_responses_output"))
 
         # Display thinking block separately if present
-        if thinking:
+        if thinking and _DEBUG:
             if _RICH:
                 console.print(Panel(thinking, title="[dim]thinking[/dim]", border_style="dim",
                                    padding=(0, 1)))
@@ -2744,8 +2815,6 @@ def agent_loop(cfg, conn, sid, messages, user_msg):
             fn   = tc["function"]
             name = fn["name"]
             args = fn.get("arguments", "{}")
-            args_display = args if len(args) <= DISPLAY_TOOL_ARGS_MAX \
-                           else args[:DISPLAY_TOOL_ARGS_MAX - 3] + "…"
 
             # Phase indicator — only print when phase changes
             phase = _classify_phase(name, args)
@@ -2753,13 +2822,15 @@ def agent_loop(cfg, conn, sid, messages, user_msg):
                 print_phase(phase)
                 _last_phase = phase
 
+            pr_tool("  → " + tool_summary(name, args))
+
             # Run tool — catch both soft cancel and hard interrupt.
             # No spinner for tools that may call input() (permission prompts).
             result = "ERROR: tool did not return a result"
             _may_prompt = _SAFE_MODE or name in ("write_file", "patch_file", "run_command")
             if _RICH and not _may_prompt:
                 try:
-                    with console.status(f"[dim]{name}…[/dim]", spinner="dots"):
+                    with console.status("正在执行…", spinner="dots"):
                         result = dispatch_tool(name, args)
                 except KeyboardInterrupt:
                     _CANCEL.set()
@@ -2772,7 +2843,7 @@ def agent_loop(cfg, conn, sid, messages, user_msg):
             if _CANCEL.is_set():
                 # Ask: cancel or continue?
                 try:
-                    ans = input("\n  ◆ Cancel agent? [y/N] ").strip().lower()
+                    ans = input("\n  是否停止当前任务？y=停止 / 回车=继续：").strip().lower()
                 except EOFError:
                     ans = "y"
                 if ans in ("y", "yes"):
@@ -2783,10 +2854,10 @@ def agent_loop(cfg, conn, sid, messages, user_msg):
                 result = "ERROR: interrupted by user"
 
             result_str     = str(result)
-            result_display = result_str if len(result_str) <= DISPLAY_TOOL_RESULT_MAX \
-                             else result_str[:DISPLAY_TOOL_RESULT_MAX - 3] + "…"
             hint = _ios_hint(result_str) if result_str.startswith("ERROR:") else None
-            print_tool_call(name, args_display, result_display, hint)
+            show_tool_result(name, args, result_str)
+            if hint:
+                pr_info(hint)
 
             messages.append({
                 "role":         "tool",
@@ -3035,6 +3106,9 @@ System & Files:
   /export [file]  /allowlist [add|rm]  /mcp [add|list|remove|tools]  /plugins
 
 Shortcuts:
+  /details [编号]  查看本轮工具完整记录（最近 30 条）
+  /multiline       多行输入，/send 发送，/cancel 放弃
+  /retry           再次发送上一条用户提示词
   /exit  /help
 
 Notes: OPENAI_API_KEY > ANTHROPIC_API_KEY > config file · Auto-compact at ~200k tokens""")
@@ -3046,6 +3120,9 @@ Notes: OPENAI_API_KEY > ANTHROPIC_API_KEY > config file · Auto-compact at ~200k
     t.add_column("Description", style="dim")
 
     rows = [
+        ("/details [编号]",               "查看本轮工具完整参数和结果（最近 30 条）"),
+        ("/multiline",                    "多行输入；/send 发送，/cancel 放弃"),
+        ("/retry",                        "重新发送上一条用户提示词"),
         ("/config",                      "Show config (key source in brackets)"),
         ("/config key=value",            "Set a config value"),
         ("/login [new|consent]",          "Continue with ChatGPT"),
@@ -3390,7 +3467,21 @@ def main():
         if not raw:
             continue
 
-        if raw.startswith("/"):
+        literal_prompt = False
+        if raw == "/multiline":
+            literal_prompt = True
+            raw = read_multiline()
+            if not raw:
+                continue
+        elif raw == "/retry":
+            literal_prompt = True
+            raw = next((m.get("content", "") for m in reversed(msgs) if m.get("role") == "user"), "")
+            if not raw:
+                pr_dim("当前会话没有可重用的提示词。")
+                continue
+            pr_user(raw)
+
+        if raw.startswith("/") and not literal_prompt:
             parts = raw[1:].split(" ", 1)
             cmd   = parts[0].lower()
             arg   = parts[1] if len(parts) > 1 else ""
@@ -3401,6 +3492,9 @@ def main():
 
             elif cmd in ("login", "logout", "auth"):
                 cmd_auth(cfg, cmd, arg)
+
+            elif cmd == "details":
+                show_tool_details(arg)
 
             elif cmd == "mcp":
                 cmd_mcp(arg, cfg)
