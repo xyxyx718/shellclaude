@@ -445,3 +445,11 @@ MIT
 认证与 Responses 模块位于 `shellclaude_lib/`。升级会移除内容与旧发行版完全一致的两个根目录辅助模块；自行修改过的旧文件保留。发布者新增运行文件时更新 `scripts/install.py` 的 `FILES` 列表。
 
 根目录仅保留 `install.sh` 作为更新入口；完整安装脚本位于 `scripts/install.py`。升级自动移除未修改过的旧版根目录 `install.py`，自行修改的版本保留。
+
+### Bypass 模式
+
+`/bypass on` 跳过工具审批、命令拦截、内网 URL 限制和编译参数过滤；
+`/bypass off` 恢复普通模式，`/bypass` 查看状态（也接受 `/pypass`）。
+默认关闭，仅当前进程生效，输入提示符会显示 `[BYPASS]`。`/safe on` 会关闭 bypass。
+文件工具仍保护 shellclaude 自身的配置、会话数据库、凭据和内部规则路径。
+任意 shell 命令或 Python 代码具有应用本身的文件访问权限，这些文件工具检查不是执行代码的沙箱。

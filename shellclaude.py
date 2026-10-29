@@ -138,6 +138,7 @@ SNIPPETS_DIR = os.path.join(DATA_DIR, "snippets")
 PERSONAS_DIR = os.path.join(DATA_DIR, "personas")
 _DEBUG           = False  # /debug on|off
 _DIFF_MODE       = False  # /diff on — show changes without writing
+_BYPASS_MODE     = False  # /bypass on — session-only unrestricted execution
 _SAFE_MODE       = False  # /safe on — all tool calls need confirmation
 MAX_ITERS        = 32     # max agentic iterations per turn
 _STUCK_WINDOW    = 3      # identical tool calls in a row = stuck loop
@@ -324,6 +325,8 @@ def is_allowed(value, allowlist):
     return False
 
 def ask_permission(action, detail):
+    if _BYPASS_MODE:
+        return "y"
     labels = {
         "run command": "执行命令", "write file": "写入文件", "patch file": "修改文件",
         "read_file": "读取文件", "list_files": "列出文件",
@@ -1131,7 +1134,7 @@ def _is_sensitive_path(path):
         return True, "shellclaude OAuth storage"
     if abs_path in _SENSITIVE_READ_PATHS:
         return True, "shellclaude config/db (contains API key)"
-    if _SENSITIVE_READ_PATTERNS.search(path.replace("\\", "/")):
+    if not _BYPASS_MODE and _SENSITIVE_READ_PATTERNS.search(path.replace("\\", "/")):
         return True, "likely credential file"
     return False, None
 
@@ -1285,7 +1288,7 @@ def tool_run_command(cmd, allowlist=None):
     allowlist = allowlist or []
 
     cmd_stripped = cmd.strip()
-    for pattern, reason in _BLOCKED_PATTERNS:
+    for pattern, reason in (() if _BYPASS_MODE else _BLOCKED_PATTERNS):
         if pattern.search(cmd_stripped):
             pr_err(f"  ✗ Command blocked ({reason}): {cmd_stripped[:120]}")
             return f"BLOCKED: command matched blocked pattern ({reason})"
@@ -1499,6 +1502,8 @@ def _is_safe_url(url):
     from urllib.parse import urlparse
     try:
         parsed = urlparse(url)
+        if _BYPASS_MODE:
+            return (True, "") if parsed.scheme in ("http", "https") and parsed.hostname else (False, "invalid HTTP URL")
         host = parsed.hostname or ""
         # Reject obviously internal hostnames
         _blocked_hosts = {"localhost", "0.0.0.0", "broadcasthost", "ip6-localhost"}
@@ -1642,6 +1647,8 @@ def _sanitize_clang_flags(flags_str):
         parts = shlex.split(flags_str)
     except ValueError:
         return []
+    if _BYPASS_MODE:
+        return parts
     safe, skip_next = [], False
     for part in parts:
         if skip_next:
@@ -1852,7 +1859,7 @@ def dispatch_tool(name, args_str):
         args = json.loads(args_str) if args_str else {}
 
         # Safe mode: confirm every tool call regardless of allowlist
-        if _SAFE_MODE:
+        if _SAFE_MODE and not _BYPASS_MODE:
             detail = args_str[:DISPLAY_DETAIL_MAX] if args_str else ""
             ans = ask_permission(f"[safe] {name}", detail)
             if ans == "n":
@@ -3134,6 +3141,7 @@ Shortcuts:
   /details [编号]  查看本轮工具完整记录（最近 30 条）
   /multiline       多行输入，/send 发送，/cancel 放弃
   /retry           再次发送上一条用户提示词
+  /bypass on|off   跳过审批和命令拦截
   /exit  /help
 
 Notes: OPENAI_API_KEY > ANTHROPIC_API_KEY > config file · Auto-compact at ~200k tokens""")
@@ -3212,6 +3220,7 @@ Notes: OPENAI_API_KEY > ANTHROPIC_API_KEY > config file · Auto-compact at ~200k
         ("/import <sid> <idx...>",        "Import messages from another session"),
         ("/budget <N>|off",               "Max iterations for next turn only"),
         ("/thinking-budget <N>|off",      "Anthropic extended thinking token budget"),
+        ("/bypass on|off",                 "跳过审批和命令拦截，仅当前进程生效"),
         ("/safe [on|off]",                "Confirm every tool call regardless of allowlist"),
         ("/diff [on|off]",               "Dry-run mode: show changes without writing"),
         ("/git [s|d|l|commit ...]",      "Git shortcuts: status/diff/log/commit"),
@@ -3473,10 +3482,12 @@ def main():
     _check_path_safety(DB_PATH,  "shellclaude.db")
 
     # Mutable REPL-state flags — declared global once here, not scattered per-command
-    global _DEBUG, _DIFF_MODE, _SAFE_MODE, _TURN_BUDGET, _THINKING_BUDGET
+    global _DEBUG, _DIFF_MODE, _SAFE_MODE, _BYPASS_MODE, _TURN_BUDGET, _THINKING_BUDGET
 
     while True:
         cwd_short = os.path.basename(os.getcwd()) or "/"
+        if _BYPASS_MODE:
+            cwd_short += " [BYPASS]"
         try:
             # Plain input() — console.input() is unreliable in a-Shell
             raw = input(f"\033[90m{cwd_short} ❯\033[0m ").strip()
@@ -4106,10 +4117,23 @@ def main():
                     except ValueError:
                         pr_err("Usage: /thinking-budget <tokens> | off")
 
+            elif cmd in ("bypass", "pypass"):
+                sub = arg.strip().lower()
+                if sub in ("on", "1", "true"):
+                    _BYPASS_MODE = True
+                    _SAFE_MODE = False
+                elif sub in ("off", "0", "false"):
+                    _BYPASS_MODE = False
+                elif sub not in ("", "status"):
+                    pr_err("用法：/bypass on|off")
+                    continue
+                pr_info("BYPASS 已开启：跳过审批和命令拦截。" if _BYPASS_MODE else "BYPASS 已关闭。")
+
             elif cmd == "safe":
                 sub = arg.strip().lower()
                 if sub in ("on", "1", "true", ""):
                     _SAFE_MODE = True
+                    _BYPASS_MODE = False
                     pr_info("  Safe mode ON — all tool calls require confirmation")
                 elif sub in ("off", "0", "false"):
                     _SAFE_MODE = False
