@@ -19,21 +19,21 @@ Terminal coding tool for [a-Shell](https://github.com/holzschu/a-Shell). Support
 
 ```sh
 cd ~/Documents
-curl -fsSL https://raw.githubusercontent.com/xyxyx718/shellclaude/feature/chatgpt-sign-in/install.py -o install.py
-python3 install.py
+curl -fsSL https://raw.githubusercontent.com/xyxyx718/shellclaude/feature/chatgpt-sign-in/install.sh -o install.sh
+sh install.sh
 python3 shellclaude.py
 ```
 
-安装器使用 Python 标准库，自动安装主程序、OAuth／Responses 模块、独立 AGENTS.md、规则版本记录和依赖说明。所有文件取自同一个固定 Git 提交；先完整下载和校验，再替换，替换失败会回滚。配置、会话、自定义规则及 Library 内的登录凭据不被安装器覆盖。
+shell 脚本使用 curl 下载，Python 标准库负责校验与安装。安装器自动安装主程序、OAuth／Responses 模块、独立 AGENTS.md、规则版本记录和依赖说明。文件列表及 SHA-256 来自仓库的 `release-files.sha256`，不请求 GitHub API；先完整下载和校验，再替换，替换失败会回滚。若下载期间发布版本发生变化导致校验失败，重新运行即可。配置、会话、自定义规则及 Library 内的登录凭据不被安装器覆盖。
 
 以后更新：
 
 ```sh
-python3 install.py
+sh install.sh
 python3 shellclaude.py
 ```
 
-也可用 `python3 install.py --dir <安装目录>` 指定位置，或用 `--ref <分支/标签/提交>` 选择版本。默认发布分支是 [feature/chatgpt-sign-in](https://github.com/xyxyx718/shellclaude/tree/feature/chatgpt-sign-in)。需要切换安装位置时，将原来的 `shellclaude-data/` 一起移动。
+也可用 `sh install.sh <安装目录>` 指定位置；`SHELLCLAUDE_REF=<分支/标签/提交> sh install.sh` 选择版本。Code App 若只有 `python`，使用 `PYTHON=python sh install.sh`。新版 `python3 install.py` 仍可直接更新，也不请求 GitHub API。默认发布分支是 [feature/chatgpt-sign-in](https://github.com/xyxyx718/shellclaude/tree/feature/chatgpt-sign-in)。需要切换安装位置时，将原来的 `shellclaude-data/` 一起移动。
 
 安装器只更新应用文件，不自动改动 Python 依赖。首次使用 ChatGPT 登录时执行：
 
@@ -435,10 +435,12 @@ MIT
 - `/multiline` 开始多行输入，单独一行 `/send` 发送，`/cancel` 放弃。
 - `/retry` 将当前会话上一条用户提示词再次发送给模型；可能再次执行工具，仍经过原有审批。
 
-更新前退出程序，在安装目录运行 `python3 install.py`，随后重新启动。
+更新前退出程序，在安装目录运行 `sh install.sh`，随后重新启动。
 
 常用查看命令默认免审批：`ls`、`pwd`、`du`、`wc`、`stat`、`which`、
 `whoami`、`uname`、`basename`、`dirname`、`cat`、`head`、`tail`。
 仅适用于单条命令；带重定向、串联、通配符或命令替换的写法仍按原规则处理。
 读取已识别的凭据文件、持续跟踪日志的 `tail -f` 不属于默认放行范围。
 `/allowlist` 会同时列出默认命令和自定义规则；安全模式仍逐次确认。
+
+认证与 Responses 模块位于 `shellclaude_lib/`。升级会移除内容与旧发行版完全一致的两个根目录辅助模块；自行修改过的旧文件保留。发布者修改程序后运行 `python3 tools/update_manifest.py` 更新发布清单，再将清单与程序一起提交。

@@ -48,17 +48,17 @@ def _api_base_url(cfg):
 
 def _chatgpt_auth():
     try:
-        from shellclaude_auth import ChatGPTAuth
+        from shellclaude_lib.auth import ChatGPTAuth
     except ImportError:
-        raise RuntimeError("Install shellclaude_auth.py and shellclaude_responses.py alongside shellclaude.py for ChatGPT login.") from None
+        raise RuntimeError("缺少 shellclaude_lib 模块，请运行 sh install.sh 补齐。") from None
     return ChatGPTAuth()
 
 
 def _chatgpt_provider():
     try:
-        from shellclaude_responses import ResponsesProvider
+        from shellclaude_lib.responses import ResponsesProvider
     except ImportError:
-        raise RuntimeError("Install shellclaude_responses.py alongside shellclaude.py.") from None
+        raise RuntimeError("缺少 shellclaude_lib/responses.py，请运行 sh install.sh 补齐。") from None
     return ResponsesProvider(_chatgpt_auth())
 
 
@@ -2289,7 +2289,7 @@ def _debug_print(label, obj):
     if not _DEBUG:
         return
     try:
-        from shellclaude_auth import redact
+        from shellclaude_lib.auth import redact
         obj = redact(obj)
     except ImportError:
         pass
@@ -2965,7 +2965,7 @@ def cmd_auth(cfg, command, arg):
             pr_info(auth.status())
             pr_info("Use /model to refresh account-specific model choices.")
         elif arg.strip() == "probe":
-            from shellclaude_auth import Loopback
+            from shellclaude_lib.auth import Loopback
             listener = Loopback(probe=True)
             pr_info("Loopback test only (no login). Open in Safari while a-Shell stays visible:")
             print(listener.uri)

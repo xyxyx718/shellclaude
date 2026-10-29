@@ -1,7 +1,7 @@
 """Stateless public Responses HTTP/SSE adapter for ChatGPT plan usage."""
 import json
 from http.client import HTTPException
-from shellclaude_auth import AuthError, RemoteError, RESOURCE, request
+from shellclaude_lib.auth import AuthError, RemoteError, RESOURCE, request
 
 NAMESPACE = "shellclaude"
 

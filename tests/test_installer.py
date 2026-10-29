@@ -2,9 +2,12 @@
 import contextlib
 import io
 import json
+import hashlib
 import os
 from pathlib import Path
 import tempfile
+import subprocess
+import sys
 import unittest
 from unittest.mock import patch
 
@@ -21,14 +24,14 @@ class InstallerTests(unittest.TestCase):
         self.target = Path(self.temp.name) / "app"
         self.target.mkdir()
         root = Path(installer.__file__).resolve().parent
-        self.bodies = {name: (root / name).read_bytes() for name in installer.FILES}
+        self.bodies = {name: (root / name).read_bytes() for name in installer.parse_manifest((root / installer.MANIFEST).read_bytes())}
         self.urls = []
 
     def fetch(self, url):
         self.urls.append(url)
-        if url.startswith("https://api.github.com/"):
-            return json.dumps({"sha": COMMIT}).encode()
-        prefix = f"https://raw.githubusercontent.com/{installer.REPOSITORY}/{COMMIT}/"
+        if url.endswith(installer.MANIFEST):
+            return "".join(hashlib.sha256(body).hexdigest() + "  " + name + "\n" for name, body in self.bodies.items()).encode()
+        prefix = f"https://raw.githubusercontent.com/{installer.REPOSITORY}/{installer.DEFAULT_REF}/"
         self.assertTrue(url.startswith(prefix), url)
         return self.bodies[url[len(prefix):]]
 
@@ -37,11 +40,12 @@ class InstallerTests(unittest.TestCase):
             return installer.install(self.target)
 
     def test_installs_all_files_from_one_pinned_commit(self):
-        self.assertEqual(self.run_install(), COMMIT)
+        self.assertEqual(len(self.run_install()), 64)
         for name, body in self.bodies.items():
             self.assertEqual((self.target / name).read_bytes(), body)
-        self.assertEqual(len(self.urls), len(installer.FILES) + 1)
-        self.assertIn("feature%2Fchatgpt-sign-in", self.urls[0])
+        self.assertEqual(len(self.urls), len(self.bodies) + 1)
+        self.assertIn("raw.githubusercontent.com", self.urls[0])
+        self.assertFalse(any("api.github.com" in url for url in self.urls))
 
     def test_update_preserves_settings_sessions_and_custom_agents(self):
         data = self.target / "shellclaude-data"
@@ -58,19 +62,19 @@ class InstallerTests(unittest.TestCase):
         old = self.target / "shellclaude.py"
         old.write_text("old program")
         def failing(url):
-            if url.endswith("shellclaude_responses.py"):
+            if url.endswith("shellclaude_lib/responses.py"):
                 raise RuntimeError("fixture network failure")
             return self.fetch(url)
         with patch.object(installer, "download", side_effect=failing):
             with self.assertRaises(RuntimeError):
                 installer.install(self.target)
         self.assertEqual(old.read_text(), "old program")
-        self.assertFalse((self.target / "shellclaude_auth.py").exists())
+        self.assertFalse((self.target / "shellclaude_lib/auth.py").exists())
 
     def test_syntax_error_is_detected_before_any_replacement(self):
         old = self.target / "shellclaude.py"
         old.write_text("old program")
-        self.bodies["shellclaude_auth.py"] = b"def broken("
+        self.bodies["shellclaude_lib/auth.py"] = b"def broken("
         with self.assertRaises(SyntaxError):
             self.run_install()
         self.assertEqual(old.read_text(), "old program")
@@ -92,7 +96,7 @@ class InstallerTests(unittest.TestCase):
                 self.run_install()
         self.assertEqual(old.read_text(), "old program")
         self.assertEqual(old.stat().st_mode & 0o777, 0o700)
-        self.assertFalse((self.target / "shellclaude_auth.py").exists())
+        self.assertFalse((self.target / "shellclaude_lib/auth.py").exists())
         self.assertFalse(list(self.target.glob(".shellclaude-update-*")))
 
     def test_external_symlink_target_is_rejected(self):
@@ -103,16 +107,81 @@ class InstallerTests(unittest.TestCase):
             self.run_install()
         self.assertEqual(external.read_text(), "keep")
 
-    def test_invalid_commit_is_rejected(self):
-        with patch.object(installer, "download", return_value=b'{"sha":"../invalid"}'):
-            with self.assertRaises(RuntimeError):
-                installer.resolve_commit("main")
+    def test_invalid_manifest_is_rejected(self):
+        for path in ("../outside", "shellclaude-data/AGENTS.md", "/absolute", "defaults/../bad"):
+            with self.assertRaises(ValueError):
+                installer.parse_manifest(("a" * 64 + "  " + path).encode())
+
+    def test_hash_mismatch_leaves_program_untouched(self):
+        original = self.fetch
+        def tampered(url):
+            body = original(url)
+            return body + b"#changed" if url.endswith("shellclaude.py") else body
+        with patch.object(installer, "download", side_effect=tampered):
+            with self.assertRaisesRegex(ValueError, "校验"):
+                installer.install(self.target)
+        self.assertFalse((self.target / "shellclaude.py").exists())
+
+    def test_local_staging_install_never_uses_network(self):
+        source = Path(self.temp.name) / "source"
+        source.mkdir()
+        manifest = ""
+        for name, body in self.bodies.items():
+            target = source / name
+            target.parent.mkdir(parents=True, exist_ok=True)
+            target.write_bytes(body)
+            manifest += hashlib.sha256(body).hexdigest() + "  " + name + "\n"
+        (source / installer.MANIFEST).write_text(manifest)
+        with patch.object(installer, "download", side_effect=AssertionError("network")):
+            installer.install(self.target, source=source)
+        self.assertTrue((self.target / "shellclaude_lib/auth.py").is_file())
 
     def test_invalid_history_is_rejected(self):
         self.bodies["defaults/agents-history.json"] = b'{"wrong":"shape"}'
         with self.assertRaises(ValueError):
             self.run_install()
         self.assertFalse((self.target / "shellclaude.py").exists())
+
+    def test_stock_legacy_modules_removed_and_edits_kept(self):
+        auth_body = self.bodies["shellclaude_lib/auth.py"]
+        (self.target / "shellclaude_auth.py").write_bytes(auth_body)
+        (self.target / "shellclaude_responses.py").write_text("# custom legacy module")
+        self.run_install()
+        self.assertFalse((self.target / "shellclaude_auth.py").exists())
+        self.assertEqual((self.target / "shellclaude_responses.py").read_text(), "# custom legacy module")
+
+    def test_shell_downloads_manifest_then_python_installs(self):
+        root = Path(installer.__file__).resolve().parent
+        fixture = Path(self.temp.name) / "fixture"
+        fixture.mkdir()
+        for name, body in self.bodies.items():
+            path = fixture / name
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_bytes(body)
+        (fixture / installer.MANIFEST).write_bytes((root / installer.MANIFEST).read_bytes())
+        bin_dir = Path(self.temp.name) / "bin"
+        bin_dir.mkdir()
+        curl = bin_dir / "curl"
+        curl.write_text("#!" + sys.executable + "\n" +
+            "import os, sys, shutil\n" +
+            "from pathlib import Path\n" +
+            "url = sys.argv[2]\n" +
+            "assert url.startswith('https://raw.githubusercontent.com/')\n" +
+            "relative = url.split('/feature/chatgpt-sign-in/', 1)[1]\n" +
+            "shutil.copyfile(Path(os.environ['FIXTURE']) / relative, sys.argv[4])\n")
+        curl.chmod(0o700)
+        env = dict(os.environ, PATH=str(bin_dir) + os.pathsep + os.environ['PATH'],
+                   PYTHON=sys.executable, FIXTURE=str(fixture))
+        result = subprocess.run(['sh', str(root / 'install.sh'), str(self.target)],
+                                env=env, capture_output=True, text=True, timeout=30)
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertEqual((self.target / 'shellclaude.py').read_bytes(), self.bodies['shellclaude.py'])
+        # An interrupted second download must leave the installed program intact.
+        (fixture / 'shellclaude_lib/auth.py').unlink()
+        result = subprocess.run(['sh', str(root / 'install.sh'), str(self.target)],
+                                env=env, capture_output=True, text=True, timeout=30)
+        self.assertNotEqual(result.returncode, 0)
+        self.assertEqual((self.target / 'shellclaude.py').read_bytes(), self.bodies['shellclaude.py'])
 
     def test_rules_are_not_literal_text_in_main_source(self):
         source = Path(app.__file__).read_text()

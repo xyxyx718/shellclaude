@@ -17,8 +17,8 @@ from urllib.request import urlopen
 import jwt
 import rsa
 import shellclaude as app
-import shellclaude_auth as auth
-import shellclaude_responses as responses
+from shellclaude_lib import auth
+from shellclaude_lib import responses
 
 TOOLS = [{"type": "function", "function": {"name": "read_file", "description": "Read",
           "parameters": {"type": "object", "properties": {"path": {"type": "string"}}, "required": ["path"]}}}]
