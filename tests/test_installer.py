@@ -136,6 +136,7 @@ class InstallerTests(unittest.TestCase):
             "assert sys.argv[-2:] == ['-o', 'scripts/install.py']\n" +
             "Path('scripts/install.py').write_text(\"from pathlib import Path\\nPath('executed').write_text('ok')\\n\")\n")
         curl.chmod(0o700)
+        (bin_dir / 'python').symlink_to(sys.executable)
         env = dict(os.environ, PATH=str(bin_dir) + os.pathsep + os.environ['PATH'], PYTHON=sys.executable)
         result = subprocess.run(['sh', str(root / 'install.sh')], cwd=self.target,
                                 env=env, capture_output=True, text=True, timeout=30)

@@ -33,7 +33,7 @@ sh install.sh
 python3 shellclaude.py
 ```
 
-请在安装目录运行。也可用 `sh install.sh --dir <安装目录>` 指定位置，`sh install.sh --ref <分支/标签/提交>` 选择文件版本。Code App 若只有 `python`，使用 `PYTHON=python sh install.sh`。新版 `python3 scripts/install.py` 仍可直接更新，也不请求 GitHub API。默认发布分支是 [feature/chatgpt-sign-in](https://github.com/xyxyx718/shellclaude/tree/feature/chatgpt-sign-in)。需要切换安装位置时，将原来的 `shellclaude-data/` 一起移动。
+请在安装目录运行。也可用 `sh install.sh --dir <安装目录>` 指定位置，`sh install.sh --ref <分支/标签/提交>` 选择文件版本。a-Shell 和 Code App 均直接使用 `sh install.sh`。新版 `python3 scripts/install.py` 仍可直接更新，也不请求 GitHub API。默认发布分支是 [feature/chatgpt-sign-in](https://github.com/xyxyx718/shellclaude/tree/feature/chatgpt-sign-in)。需要切换安装位置时，将原来的 `shellclaude-data/` 一起移动。
 
 安装器只更新应用文件，不自动改动 Python 依赖。首次使用 ChatGPT 登录时执行：
 
