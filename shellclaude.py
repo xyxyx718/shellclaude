@@ -28,9 +28,22 @@ except ImportError:
 # Optional ChatGPT modules are loaded lazily so API-key single-file installs still work.
 def auth_provider(cfg):
     method = cfg.get("auth_method")
-    if method in ("openai_api", "anthropic", "chatgpt"):
+    if method in ("openai_api", "anthropic", "chatgpt", "deepseek"):
         return method
-    return "anthropic" if cfg.get("endpoint_type") == "anthropic" else "openai_api"
+    return cfg["endpoint_type"] if cfg.get("endpoint_type") in ("anthropic", "deepseek") else "openai_api"
+
+
+DEEPSEEK_API_URL = "https://api.deepseek.com"
+
+
+def _provider_api_key(cfg):
+    if auth_provider(cfg) == "deepseek":
+        return os.getenv("DEEPSEEK_API_KEY") or cfg.get("deepseek_api_key", "")
+    return cfg.get("api_key", "")
+
+
+def _api_base_url(cfg):
+    return DEEPSEEK_API_URL if auth_provider(cfg) == "deepseek" else cfg["base_url"].rstrip("/")
 
 
 def _chatgpt_auth():
@@ -74,6 +87,9 @@ PLATFORM_AGENTS_PATH = os.path.join(DATA_DIR, "AGENTS.md")
 
 DEFAULT_CFG = {
     "api_key":        "",
+    "deepseek_api_key": "",
+    "deepseek_thinking": "enabled",
+    "deepseek_reasoning_effort": "high",
     "base_url":       "",
     "model":          "",
     "max_tokens":     8192,
@@ -81,7 +97,7 @@ DEFAULT_CFG = {
     "system":         "",
     "format":         "none",
     "stream":         True,
-    "endpoint_type":  "openai",   # "openai" | "anthropic"
+    "endpoint_type":  "openai",   # "openai" | "anthropic" | "deepseek"
     "plugins_enabled": True,
     "mcp_servers":    {},
 }
@@ -188,10 +204,10 @@ def _fetch_model_list(cfg):
         except RuntimeError as e:
             pr_err(str(e))
             return []
-    base = (cfg.get("base_url") or "").rstrip("/")
+    base = DEEPSEEK_API_URL if auth_provider(cfg) == "deepseek" else (cfg.get("base_url") or "").rstrip("/")
     if not base:
         return
-    key = cfg.get("api_key", "")
+    key = _provider_api_key(cfg)
     try:
         models_url = f"{base}/models"
         safe, reason = _is_safe_url(models_url)
@@ -200,6 +216,14 @@ def _fetch_model_list(cfg):
         req = Request(models_url, headers={"Authorization": f"Bearer {key}"})
         with urlopen(req) as r:
             data = json.loads(r.read())
+        if auth_provider(cfg) == "deepseek":
+            catalog = []
+            for model in data["data"]:
+                mid = model["id"]
+                catalog.append({"slug": mid, "display_name": model.get("name", mid)})
+                _MODEL_METADATA_CACHE[mid] = {"context_window": model.get("context_window"),
+                                               "inp_price": None, "out_price": None}
+            return catalog
         count = 0
         for m in data.get("data", []):
             mid = m.get("id", "")
@@ -225,6 +249,9 @@ def _fetch_model_list(cfg):
         if count:
             pr_dim(f"  Fetched live metadata for {count} models")
     except Exception:
+        if auth_provider(cfg) == "deepseek":
+            pr_err("无法读取 DeepSeek 官方模型列表，请检查 API key 和网络。")
+            return []
         pass   # silent — hardcoded dicts are the fallback
 
 def get_pricing(model):
@@ -303,7 +330,7 @@ DEFAULT_PLATFORM_AGENTS = """\
 
 ## shellclaude 自身
 
-- shellclaude 是本地编码助手：模型提出工具调用，本机执行并把结果返回模型，直到任务完成。支持 ChatGPT 登录、OpenAI-compatible 和 Anthropic API key；沿用用户当前选择的 provider 与模型。
+- shellclaude 是本地编码助手：模型提出工具调用，本机执行并把结果返回模型，直到任务完成。支持 ChatGPT 登录、DeepSeek 官方 API、OpenAI-compatible 和 Anthropic API key；沿用用户当前选择的 provider 与模型。
 - 通过当前请求提供的工具直接工作：read_file / list_files / search_files 查阅项目，patch_file / write_file 编辑，run_python 执行 Python，run_command 执行命令。可用工具以实际列表为准，不另启动 Codex、shellclaude 或另一层 agent 来完成同一任务。
 - `/login`、`/auth`、`/model`、`/cd` 等是用户在 shellclaude 输入框使用的交互命令，不是模型工具，也不是系统 shell 命令。不要把它们交给 run_command。模型操作文件时使用明确路径；单次 shell 或 Python 执行中的 cd 不会切换后续工具的项目目录。
 - 审批由应用处理：y 允许一次，a 进入始终允许的范围选择，n 拒绝。`/safe on` 对每次工具调用要求确认；`/diff on` 让文件写入和补丁只预览。按返回结果继续，不把拒绝或预览说成已执行，也不用在回复里重复询问工具已经询问过的授权。
@@ -330,7 +357,7 @@ DEFAULT_PLATFORM_AGENTS = """\
 - shellclaude-data 保存配置、会话、插件和规则；移动安装位置时一起保留。项目自己的 AGENTS.md 用于补充项目要求。
 - 遵守工具审批与系统目录权限。认证资料留在独立 Library 目录，不读入对话、不打印、不上传。保留既有认证与计费方式，订阅失败不自动切换 API 计费。
 """
-_PREVIOUS_PLATFORM_DEFAULT_HASHES = frozenset(["b171f7db7e6644327b38855345bd2ccd870db60ad127b6d032b47ccb6bb7a203", "9d24b7fdf9d93bccee377a444da1ac1667e9c94259213ece8b62332516a79605", "0fd6e8ea1138c859def1405640f44338f8e3f7fa9581dd463eb25c8d7cd9e57a"])
+_PREVIOUS_PLATFORM_DEFAULT_HASHES = frozenset(["b171f7db7e6644327b38855345bd2ccd870db60ad127b6d032b47ccb6bb7a203", "9d24b7fdf9d93bccee377a444da1ac1667e9c94259213ece8b62332516a79605", "0fd6e8ea1138c859def1405640f44338f8e3f7fa9581dd463eb25c8d7cd9e57a", "6df9f71a2774ae9a3b09ad0128b030a2c73634442638053d78dc0e335b05e77a"])
 
 PLATFORM_AGENTS_RULES = DEFAULT_PLATFORM_AGENTS
 
@@ -2134,7 +2161,7 @@ def _sys_prompt(cfg):
         return base + "\n\nRespond ONLY with valid YAML. No prose, no markdown fences."
     return base
 
-_INTERNAL_MSG_KEYS = frozenset(("_db_id", "_pinned", "thinking", "_responses_output"))
+_INTERNAL_MSG_KEYS = frozenset(("_db_id", "_pinned", "thinking", "_responses_output", "reasoning_content"))
 
 def _clean_messages(messages):
     """Strip internal tracking keys before sending to any API."""
@@ -2156,6 +2183,19 @@ def _build_payload_openai(cfg, messages, stream=False):
         "max_tokens":  int(cfg["max_tokens"]),
         "temperature": float(cfg["temperature"]),
     }
+    if auth_provider(cfg) == "deepseek":
+        payload["messages"] = [dict(m) for m in payload["messages"]]
+        mode = cfg.get("deepseek_thinking", "enabled")
+        effort = cfg.get("deepseek_reasoning_effort", "high")
+        if mode not in ("enabled", "disabled") or effort not in ("low", "high", "max"):
+            raise RuntimeError("DeepSeek: deepseek_thinking=enabled|disabled; deepseek_reasoning_effort=low|high|max")
+        payload["thinking"] = {"type": mode}
+        if mode == "enabled":
+            payload.pop("temperature", None)
+            payload["reasoning_effort"] = effort
+        for original, cleaned in zip(messages, payload["messages"][1:]):
+            if original.get("role") == "assistant":
+                cleaned["reasoning_content"] = original.get("reasoning_content") or original.get("thinking") or ""
     if cfg.get("format") == "json":
         payload["response_format"] = {"type": "json_object"}
     if stream:
@@ -2197,7 +2237,7 @@ def _api_headers(cfg):
         }
     return {
         "Content-Type":  "application/json",
-        "Authorization": f"Bearer {cfg['api_key']}",
+        "Authorization": f"Bearer {_provider_api_key(cfg)}",
     }
 
 def _track_cost(cfg, usage):
@@ -2262,7 +2302,7 @@ def api_call(cfg, messages, retries=3):
         url  = ANTHROPIC_API_URL
     else:
         payload = _build_payload_openai(cfg, messages)
-        url  = cfg["base_url"].rstrip("/") + "/chat/completions"
+        url  = _api_base_url(cfg) + "/chat/completions"
     body    = json.dumps(payload).encode()
     headers = _api_headers(cfg)
     _debug_print("REQUEST", payload)
@@ -2272,6 +2312,8 @@ def api_call(cfg, messages, retries=3):
         with urlopen(req) as r:
             data = json.loads(r.read())
         _debug_print("RESPONSE", data)
+        if auth_provider(cfg) == "deepseek" and data["choices"][0].get("finish_reason") not in ("stop", "tool_calls"):
+            raise RuntimeError("DeepSeek 输出未完成，本次工具调用未执行。")
         if is_anthropic:
             result = _parse_anthropic_response(data)
             _track_cost(cfg, result["usage"])
@@ -2280,6 +2322,13 @@ def api_call(cfg, messages, retries=3):
             result = data
         return result
 
+    if auth_provider(cfg) == "deepseek":
+        try:
+            return do_request(0)
+        except HTTPError as exc:
+            hint = {401: "请检查 DeepSeek API key", 402: "DeepSeek API 余额不足",
+                    403: "请检查账号或服务区域权限", 429: "请求受限，请稍后重试"}.get(exc.code, "请稍后重试或检查请求设置")
+            raise RuntimeError(f"DeepSeek HTTP {exc.code}: {hint}") from None
     return _with_retry(do_request, retries)
 
 
@@ -2352,7 +2401,7 @@ def api_call_stream(cfg, messages, retries=3):
         else _build_payload_openai(cfg, messages, stream=True)
     )
     body    = json.dumps(payload).encode()
-    url     = ANTHROPIC_API_URL if is_anthropic else cfg["base_url"].rstrip("/") + "/chat/completions"
+    url     = ANTHROPIC_API_URL if is_anthropic else _api_base_url(cfg) + "/chat/completions"
     headers = _api_headers(cfg)
     _debug_print("REQUEST (stream)", payload)
 
@@ -2360,6 +2409,9 @@ def api_call_stream(cfg, messages, retries=3):
         req       = Request(url, data=body, headers=headers)
         text_buf  = []
         tc_acc    = {}          # openai tool accumulator
+        reasoning_buf = []
+        deepseek = auth_provider(cfg) == "deepseek"
+        stream_done, finish_reason = False, None
         tool_blocks = {}        # anthropic tool accumulator
         counters  = {"input_tokens": 0, "output_tokens": 0}
 
@@ -2381,6 +2433,7 @@ def api_call_stream(cfg, messages, retries=3):
                         continue
                     payload_str = line[6:]
                     if payload_str == "[DONE]":
+                        stream_done = True
                         break
                     try:
                         chunk = json.loads(payload_str)
@@ -2394,6 +2447,13 @@ def api_call_stream(cfg, messages, retries=3):
                         elif token:
                             print(token, end="", flush=True)
                     else:
+                        if deepseek and chunk.get("choices"):
+                            choice = chunk["choices"][0]
+                            delta = choice.get("delta", {})
+                            if delta.get("reasoning_content"):
+                                reasoning_buf.append(delta["reasoning_content"])
+                            if choice.get("finish_reason"):
+                                finish_reason = choice["finish_reason"]
                         token, usage = _process_openai_chunk(chunk, text_buf, tc_acc)
                         if usage:
                             _track_cost(cfg, usage)
@@ -2407,6 +2467,8 @@ def api_call_stream(cfg, messages, retries=3):
             else:
                 print()
 
+        if deepseek and (not stream_done or finish_reason not in ("stop", "tool_calls")):
+            raise RuntimeError("DeepSeek 流未完整结束或输出被截断，本次工具调用未执行。")
         if is_anthropic:
             _track_cost(cfg, counters)
             tool_calls = None
@@ -2428,10 +2490,19 @@ def api_call_stream(cfg, messages, retries=3):
         text_full = "".join(text_buf)
         _debug_print("RESPONSE (stream)", {"text": text_full[:500], "tool_calls": bool(tool_calls)})
         msg = {"role": "assistant", "content": text_full}
+        if deepseek:
+            msg["reasoning_content"] = "".join(reasoning_buf)
         if tool_calls:
             msg["tool_calls"] = tool_calls
         return {"choices": [{"message": msg}], "usage": {}}
 
+    if auth_provider(cfg) == "deepseek":
+        try:
+            return do_request(0)
+        except HTTPError as exc:
+            hint = {401: "请检查 DeepSeek API key", 402: "DeepSeek API 余额不足",
+                    403: "请检查账号或服务区域权限", 429: "请求受限，请稍后重试"}.get(exc.code, "请稍后重试或检查请求设置")
+            raise RuntimeError(f"DeepSeek HTTP {exc.code}: {hint}") from None
     return _with_retry(do_request, retries)
 
 # TOKEN ESTIMATION & AUTOCOMPACT
@@ -2648,8 +2719,8 @@ def agent_loop(cfg, conn, sid, messages, user_msg):
         tcalls = msg.get("tool_calls")
 
         # Extract thinking blocks if present
-        thinking = None
-        if text and "<thinking>" in text:
+        thinking = msg.get("reasoning_content") if auth_provider(cfg) == "deepseek" else None
+        if not thinking and text and "<thinking>" in text:
             thinking, text = extract_thinking(text)
 
         asst_entry = {"role": "assistant", "content": text}
@@ -2777,15 +2848,21 @@ def cmd_auth(cfg, command, arg):
         if command == "auth" and arg.startswith("method"):
             method = arg[len("method"):].strip()
             if not method:
-                pr_info(f"Authentication: {auth_provider(cfg)}; choices: openai_api, anthropic, chatgpt")
+                pr_info(f"Authentication: {auth_provider(cfg)}; choices: openai_api, anthropic, chatgpt, deepseek")
                 return
-            if method not in ("openai_api", "anthropic", "chatgpt"):
-                raise RuntimeError("Usage: /auth method [openai_api|anthropic|chatgpt]")
+            if method not in ("openai_api", "anthropic", "chatgpt", "deepseek"):
+                raise RuntimeError("Usage: /auth method [openai_api|anthropic|chatgpt|deepseek]")
             cfg["auth_method"] = method
-            if method != "chatgpt":
+            if method == "deepseek":
+                cfg["endpoint_type"] = "deepseek"
+                cfg["model"] = "deepseek-flash"
+            elif method != "chatgpt":
                 cfg["endpoint_type"] = "anthropic" if method == "anthropic" else "openai"
             save_cfg(cfg)
             pr_info(f"Authentication → {method}. Choose a model with /model.")
+            return
+        if command == "auth" and arg.strip() in ("", "status") and auth_provider(cfg) != "chatgpt":
+            pr_info(f"Authentication: {auth_provider(cfg)}; API key: {'已设置' if _provider_api_key(cfg) else '未设置'}")
             return
         auth = _chatgpt_auth()
         if command == "login":
@@ -2962,7 +3039,7 @@ def print_help():
 
 Config & Setup:
   /login [new|consent]  /logout  /auth [status|method|accounts|probe]
-  /config [key=val]  /model <name>  /url <url>  /endpoint [openai|anthropic]
+  /config [key=val]  /model <name>  /url <url>  /endpoint [openai|anthropic|deepseek]
   /stream [on|off]
 
 Sessions & Context:
@@ -2994,7 +3071,7 @@ Notes: OPENAI_API_KEY > ANTHROPIC_API_KEY > config file · Auto-compact at ~200k
         ("/auth status|method|accounts|probe", "Authentication settings / loopback test"),
         ("/model <name>",                "Switch model"),
         ("/url <base_url>",              "Set API base URL (openai mode only)"),
-        ("/endpoint [openai|anthropic]", "Switch endpoint type"),
+        ("/endpoint [openai|anthropic|deepseek]", "Switch endpoint type"),
         ("/stream [on|off]",             "Toggle streaming (default: on)"),
         ("/debug [on|off]",              "Print full API request/response"),
         ("", ""),
@@ -3085,7 +3162,7 @@ def cmd_config(cfg, args):
             for k, v in cfg.items():
                 if k.startswith("_"):
                     continue
-                if k == "api_key":
+                if k in ("api_key", "deepseek_api_key"):
                     src  = cfg.get("_key_source", "?")
                     t.add_row(k, "***" if v else "(not set)", f"[{src}]")
                 else:
@@ -3097,7 +3174,7 @@ def cmd_config(cfg, args):
                 if k.startswith("_"):
                     continue
                 src  = cfg.get("_key_source", "?")
-                disp = f"{'***' if v else '(not set)'}  [{src}]" if k == "api_key" else v
+                disp = f"{'***' if v else '(not set)'}  [{src}]" if k in ("api_key", "deepseek_api_key") else v
                 print(f"    {k} = {disp}")
     else:
         try:
@@ -3111,7 +3188,7 @@ def cmd_config(cfg, args):
             if k == "api_key":
                 cfg["_key_source"] = "config"
             save_cfg(cfg)
-            pr_info(f"✓ {k} = {'***' if k == 'api_key' else v}")
+            pr_info(f"✓ {k} = {'***' if k in ('api_key', 'deepseek_api_key') else v}")
         except ValueError:
             pr_err("Usage: /config key=value")
 
@@ -3284,9 +3361,11 @@ def main():
     _fetch_model_list(cfg)
 
     ep = cfg.get("endpoint_type", "openai")
-    if auth_provider(cfg) != "chatgpt" and not cfg["api_key"]:
+    if auth_provider(cfg) != "chatgpt" and not _provider_api_key(cfg):
         pr_err("⚠  No API key found.")
-        if ep == "anthropic":
+        if auth_provider(cfg) == "deepseek":
+            pr_err("   export DEEPSEEK_API_KEY=<key> 或 /config deepseek_api_key=<key>")
+        elif ep == "anthropic":
             pr_err("   export ANTHROPIC_API_KEY=<key>  ← shell profile")
         else:
             pr_err("   export OPENAI_API_KEY=<key>     ← shell profile")
@@ -3370,7 +3449,7 @@ def main():
                 cmd_config(cfg, arg)
 
             elif cmd == "model":
-                if auth_provider(cfg) == "chatgpt":
+                if auth_provider(cfg) in ("chatgpt", "deepseek"):
                     catalog = _fetch_model_list(cfg) or []
                     if arg:
                         if arg in {m["slug"] for m in catalog}:
@@ -3378,7 +3457,7 @@ def main():
                             save_cfg(cfg)
                             pr_info(f"Model → {arg}")
                         else:
-                            pr_err("Choose a slug from /model for the active ChatGPT account.")
+                            pr_err("请选择 /model 返回的当前 provider 可用模型。")
                     else:
                         pr_info(f"Current: {cfg['model']}")
                         for m in catalog:
@@ -3517,7 +3596,9 @@ def main():
 
             elif cmd == "endpoint":
                 val = arg.strip().lower()
-                if val in ("openai", "anthropic"):
+                if val == "deepseek":
+                    cmd_auth(cfg, "auth", "method deepseek")
+                elif val in ("openai", "anthropic"):
                     cfg["endpoint_type"] = val
                     cfg["auth_method"] = "anthropic" if val == "anthropic" else "openai_api"
                     save_cfg(cfg)
@@ -3530,7 +3611,7 @@ def main():
                 elif not val:
                     pr_info(f"Current: {cfg.get('endpoint_type', 'openai')}")
                 else:
-                    pr_err("Usage: /endpoint [openai|anthropic]")
+                    pr_err("Usage: /endpoint [openai|anthropic|deepseek]")
 
             elif cmd == "stream":
                 val = arg.strip().lower()
@@ -4057,8 +4138,8 @@ def main():
 
             continue
 
-        if auth_provider(cfg) != "chatgpt" and not cfg["api_key"]:
-            pr_err("No API key. Run: /config api_key=YOUR_KEY")
+        if auth_provider(cfg) != "chatgpt" and not _provider_api_key(cfg):
+            pr_err("未设置 API key。DeepSeek 使用 /config deepseek_api_key=KEY；其他 API provider 使用 /config api_key=KEY。")
             continue
 
         _CANCEL.clear()
