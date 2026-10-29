@@ -3,13 +3,13 @@
 [![Python](https://img.shields.io/badge/Python-3.13-blue.svg)](https://www.python.org)
 ![Platform](https://img.shields.io/badge/Platform-iOS%20%2F%20iPadOS-brightgreen)
 
-Terminal coding tool for [a-Shell](https://github.com/holzschu/a-Shell). Supports DeepSeek, OpenAI and Anthropic API-key endpoints, plus experimental official Sign in with ChatGPT.
+Terminal coding tool for [a-Shell](https://github.com/holzschu/a-Shell). Supports DeepSeek, OpenAI and Anthropic API-key endpoints, plus official Sign in with ChatGPT.
 
 ## shellclaude v1.6.0
 
-## ChatGPT 订阅登录（实验性，尚待 iPad 真机验证）
+## ChatGPT 订阅登录（已通过真机验证）
 
-本 fork 新增 `chatgpt` provider：通过官方 Sign in with ChatGPT 动态注册和 PKCE 登录，使用公开 Responses API 进行文本与本地工具调用。保留 `openai_api` 与 `anthropic` 的 API-key 路径，旧配置无需迁移。**没有执行过真实 OAuth 登录或订阅推理；Linux 测试通过不等于 iOS 可用。**
+本 fork 新增 `chatgpt` provider：通过官方 Sign in with ChatGPT 动态注册和 PKCE 登录，使用公开 Responses API 进行文本与本地工具调用。保留 `openai_api` 与 `anthropic` 的 API-key 路径，旧配置无需迁移。**用户已在 a-Shell 真机环境验证通过 ChatGPT 订阅登录，包括浏览器授权和 `127.0.0.1` 回调。**
 
 需要符合 OpenAI 当前条件的 ChatGPT 账号／workspace（目标为有资格的 Plus／Pro 用户），并同意 `chatgpt.tokens.use.direct`。最终是否可用取决于账号、地区、workspace 策略和服务端授权。订阅用量与 API 账单是不同路径，不会自动改用 API key 计费；订阅也不意味着无限调用。查看 [ChatGPT 设置 → Usage](https://chatgpt.com/#settings/Usage) 管理应用用量与授权。
 
