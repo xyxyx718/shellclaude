@@ -271,6 +271,31 @@ def get_pricing(model):
 
 
 # PERMISSIONS
+DEFAULT_READONLY_COMMANDS = frozenset({
+    "ls", "pwd", "du", "wc", "stat", "which", "whoami", "uname",
+    "basename", "dirname", "cat", "head", "tail",
+})
+
+
+def is_default_command_allowed(command):
+    """Allow ordinary inspection commands, never arbitrary shell expressions."""
+    # Reject shell syntax before tokenizing, including syntax embedded in quotes.
+    if any(c in command for c in ";&|<>$`\\\n\r\x00*?[]{}~"):
+        return False
+    try:
+        words = shlex.split(command)
+    except ValueError:
+        return False
+    if not words or words[0] not in DEFAULT_READONLY_COMMANDS:
+        return False
+    if words[0] == "tail" and any((w.startswith("-") and not w.startswith("--") and ("f" in w or "F" in w)) or w == "--follow" or w.startswith("--follow=") for w in words[1:]):
+        return False
+    for word in words[1:]:
+        if not word.startswith("-") and _is_sensitive_path(word)[0]:
+            return False
+    return True
+
+
 def load_allowlist():
     if not os.path.exists(ALLOWLIST_PATH):
         return []
@@ -1265,7 +1290,7 @@ def tool_run_command(cmd, allowlist=None):
             pr_err(f"  ✗ Command blocked ({reason}): {cmd_stripped[:120]}")
             return f"BLOCKED: command matched blocked pattern ({reason})"
 
-    if not is_allowed(cmd_stripped, allowlist):
+    if not (is_default_command_allowed(cmd_stripped) or is_allowed(cmd_stripped, allowlist)):
         ans = ask_permission("run command", cmd_stripped)
         if ans == "n":
             return "DENIED: user rejected command"
@@ -3259,6 +3284,8 @@ def cmd_allowlist(arg):
     val   = parts[1].strip() if len(parts) > 1 else ""
 
     if not sub or sub == "list":
+        pr_info("默认查看命令（仅单条命令，无重定向或串联）：")
+        print("    " + " / ".join(sorted(DEFAULT_READONLY_COMMANDS)))
         if not ALLOWLIST:
             pr_dim("  Allowlist is empty.")
         else:
