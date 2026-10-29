@@ -122,6 +122,7 @@ TOOL_TMP_DIR = os.path.join(DATA_DIR, ".tmp")
 PROTECTED_PATHS = frozenset(
     os.path.realpath(p) for p in (
         CFG_PATH, DB_PATH, ALLOWLIST_PATH, PLUGINS_DIR, PLATFORM_AGENTS_PATH,
+        os.path.join(APP_DIR, "defaults"),
         os.path.join(DATA_DIR, ".migration.sqlite3"),
         os.path.expanduser("~/Library/Application Support/shellclaude/auth"),
     )
@@ -319,45 +320,20 @@ def ask_permission(action, detail):
         ans = "n"
     return ans if ans in ("y", "a", "n") else "n"
 
-DEFAULT_PLATFORM_AGENTS = """\
-# shellclaude：a-Shell 工作指南
+def _distribution_text(relative):
+    try:
+        with open(os.path.join(APP_DIR, relative), encoding="utf-8") as f:
+            return f.read()
+    except (OSError, UnicodeError):
+        return ""
 
-## 工作方式
 
-主动完成用户交代的任务，对已授权的工作持续推进。常规、可逆的操作直接执行；需要关键信息或工具要求审批时再询问。遇到错误先调整方法继续，不把环境差异当作停止工作的理由。
-
-先读相关文件，再做必要修改并验证结果。优先使用现有工具和依赖，避免重复检查与任务无关的能力。回复跟随用户的语言，简洁说明结果，命令便于手机复制。
-
-## shellclaude 自身
-
-- shellclaude 是本地编码助手：模型提出工具调用，本机执行并把结果返回模型，直到任务完成。支持 ChatGPT 登录、DeepSeek 官方 API、OpenAI-compatible 和 Anthropic API key；沿用用户当前选择的 provider 与模型。
-- 通过当前请求提供的工具直接工作：read_file / list_files / search_files 查阅项目，patch_file / write_file 编辑，run_python 执行 Python，run_command 执行命令。可用工具以实际列表为准，不另启动 Codex、shellclaude 或另一层 agent 来完成同一任务。
-- `/login`、`/auth`、`/model`、`/cd` 等是用户在 shellclaude 输入框使用的交互命令，不是模型工具，也不是系统 shell 命令。不要把它们交给 run_command。模型操作文件时使用明确路径；单次 shell 或 Python 执行中的 cd 不会切换后续工具的项目目录。
-- 审批由应用处理：y 允许一次，a 进入始终允许的范围选择，n 拒绝。`/safe on` 对每次工具调用要求确认；`/diff on` 让文件写入和补丁只预览。按返回结果继续，不把拒绝或预览说成已执行，也不用在回复里重复询问工具已经询问过的授权。
-- 对话和工具结果保存在本机会话中。用户可用 `/new` 新建、`/sessions` 查看、`/load <id>` 恢复、`/compact` 压缩当前上下文。需要调整应用设置时说明对应交互命令，不直接改写配置或会话数据库。
-
-## 可用环境
-
-- 运行于 iOS/iPadOS 的 a-Shell，使用 python3。Node、npm、pip、NumPy、线程、asyncio 和 Python loopback 都已有真机成功记录，按任务需要使用。
-- Python 优先标准库和纯 Python 依赖；原生扩展使用设备已有模块或兼容发行包。缺依赖时根据具体报错处理。
-- 文件操作优先 read_file、list_files、search_files 和 patch_file；也可用 Python 处理遍历、文本、JSON、下载及文件更新。
-- Git 使用 lg2 或 /git；版本查询用 lg2 version。
-- 命令参数按本机实现使用。grep -P、readlink -f、find -printf、GNU 风格 date -d 不兼容时，直接换成 rg 或 Python。
-
-## 命令与编译
-
-- 工具调用采用前台、非交互方式。shellclaude 会拦截部分管道、命令替换、后台执行和分号串联写法；改成独立命令、文件工具或 Python 实现。
-- Python、Node 和 WASM 是不同运行时，分别使用各自的能力，不把 WASM 的限制套给 Python。
-- C/C++ 使用 run_c / run_cpp。编译器提示缺 SDK 时，按当前提示处理；已有设备提示使用 pkg install llvm-22。封装会给生成的临时目标设置执行权限。
-- iOS 切后台或锁屏可能暂停任务。OAuth 回调有问题先用 /auth probe；iPad 可让 Safari 与 a-Shell 同时可见。
-
-## 路径与应用数据
-
-- 项目目录和应用数据目录取自当前上下文；路径使用 pathlib、expanduser、tempfile，兼容空格与中文。
-- shellclaude-data 保存配置、会话、插件和规则；移动安装位置时一起保留。项目自己的 AGENTS.md 用于补充项目要求。
-- 遵守工具审批与系统目录权限。认证资料留在独立 Library 目录，不读入对话、不打印、不上传。保留既有认证与计费方式，订阅失败不自动切换 API 计费。
-"""
-_PREVIOUS_PLATFORM_DEFAULT_HASHES = frozenset(["b171f7db7e6644327b38855345bd2ccd870db60ad127b6d032b47ccb6bb7a203", "9d24b7fdf9d93bccee377a444da1ac1667e9c94259213ece8b62332516a79605", "0fd6e8ea1138c859def1405640f44338f8e3f7fa9581dd463eb25c8d7cd9e57a", "6df9f71a2774ae9a3b09ad0128b030a2c73634442638053d78dc0e335b05e77a"])
+BUNDLED_PLATFORM_AGENTS_PATH = os.path.join(APP_DIR, "defaults", "AGENTS.md")
+DEFAULT_PLATFORM_AGENTS = _distribution_text("defaults/AGENTS.md")
+try:
+    _PREVIOUS_PLATFORM_DEFAULT_HASHES = frozenset(json.loads(_distribution_text("defaults/agents-history.json") or "[]"))
+except (ValueError, TypeError):
+    _PREVIOUS_PLATFORM_DEFAULT_HASHES = frozenset()
 
 PLATFORM_AGENTS_RULES = DEFAULT_PLATFORM_AGENTS
 
@@ -667,10 +643,12 @@ def _sanitize_agents_md(raw):
 
 
 def _upgrade_platform_default():
-    if os.path.islink(PLATFORM_AGENTS_PATH):
+    if not DEFAULT_PLATFORM_AGENTS or os.path.islink(PLATFORM_AGENTS_PATH):
         return
     with open(PLATFORM_AGENTS_PATH, "rb") as f:
         previous = f.read(_AGENTS_MD_MAX_CHARS * 4 + 1)
+    if previous == DEFAULT_PLATFORM_AGENTS.encode("utf-8"):
+        return
     if hashlib.sha256(previous).hexdigest() not in _PREVIOUS_PLATFORM_DEFAULT_HASHES:
         return
     fd, temporary = tempfile.mkstemp(prefix=".agents-", dir=os.path.dirname(PLATFORM_AGENTS_PATH))
@@ -693,7 +671,9 @@ def _upgrade_platform_default():
 def load_platform_agents(create=False):
     """Upgrade recognized bundled defaults while preserving manual edits."""
     global PLATFORM_AGENTS_RULES
-    if create:
+    if not DEFAULT_PLATFORM_AGENTS and not os.path.isfile(PLATFORM_AGENTS_PATH):
+        raise RuntimeError("缺少 defaults/AGENTS.md，请运行 python3 install.py 补齐安装。")
+    if create and DEFAULT_PLATFORM_AGENTS:
         try:
             os.makedirs(os.path.dirname(PLATFORM_AGENTS_PATH), mode=0o700, exist_ok=True)
             try:
@@ -704,13 +684,15 @@ def load_platform_agents(create=False):
                 with os.fdopen(fd, "w", encoding="utf-8") as f:
                     f.write(DEFAULT_PLATFORM_AGENTS)
         except OSError:
-            pr_err("  平台 AGENTS.md 无法创建或升级，将尝试读取现有文件；读取失败时使用内置规则。")
+            pr_err("  平台 AGENTS.md 无法创建或升级，将尝试读取现有文件或 defaults/AGENTS.md。")
     try:
         with open(PLATFORM_AGENTS_PATH, encoding="utf-8") as f:
             rules, warnings = _sanitize_agents_md(f.read(_AGENTS_MD_MAX_CHARS + 1))
         PLATFORM_AGENTS_RULES = rules.strip() or DEFAULT_PLATFORM_AGENTS
     except (OSError, UnicodeError):
         PLATFORM_AGENTS_RULES = DEFAULT_PLATFORM_AGENTS
+    if not PLATFORM_AGENTS_RULES:
+        raise RuntimeError("平台规则不可读，请运行 python3 install.py 补齐 defaults/AGENTS.md。")
     return PLATFORM_AGENTS_RULES
 
 
@@ -3336,7 +3318,11 @@ def main():
         # Never silently start with empty history/settings after a failed migration.
         print_error("数据目录初始化或旧数据迁移失败，原文件未改动。请检查文件权限、旧配置 JSON、数据库和是否有其他实例正在运行后重试。")
         return
-    load_platform_agents(create=True)
+    try:
+        load_platform_agents(create=True)
+    except RuntimeError as exc:
+        print_error(str(exc))
+        return
     cfg  = load_cfg()
     global PLUGIN_REGISTRY, ALLOWLIST, SYSTEM, SESSION_COST, _current_model, SKILLS_REGISTRY
     SYSTEM = cfg.get("system") or DEFAULT_SYSTEM
@@ -3664,7 +3650,7 @@ def main():
                     load_agents_md(cfg, force=True)
                     pr_info("  已重新加载平台和项目规则。")
                 pr_info(f"  平台规则：{PLATFORM_AGENTS_PATH}")
-                pr_dim("  未创建或无法读取平台文件时自动使用内置规则。")
+                pr_dim("  未创建或无法读取自定义文件时使用 defaults/AGENTS.md。")
                 if AGENTS_MD_PATH:
                     pr_info(f"  项目规则：{AGENTS_MD_PATH}")
                 else:

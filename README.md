@@ -13,22 +13,35 @@ Terminal coding tool for [a-Shell](https://github.com/holzschu/a-Shell). Support
 
 需要符合 OpenAI 当前条件的 ChatGPT 账号／workspace（目标为有资格的 Plus／Pro 用户），并同意 `chatgpt.tokens.use.direct`。最终是否可用取决于账号、地区、workspace 策略和服务端授权。订阅用量与 API 账单是不同路径，不会自动改用 API key 计费；订阅也不意味着无限调用。查看 [ChatGPT 设置 → Usage](https://chatgpt.com/#settings/Usage) 管理应用用量与授权。
 
-### Quick start：在 a-Shell 直接下载
+### Quick start：统一安装和更新
 
-在 App Store a-Shell 中执行以下命令。三个 Python 文件放在同一目录，无需下载或解压整个仓库：
+已有安装请先退出 shellclaude，再在原安装目录执行；新安装可使用 `~/Documents`：
 
 ```sh
 cd ~/Documents
-python3 -m pip install rich 'PyJWT>=2.10,<3' 'rsa>=4.9.1,<5'
-curl -fsSL https://raw.githubusercontent.com/xyxyx718/shellclaude/feature/chatgpt-sign-in/shellclaude.py -o shellclaude.py
-curl -fsSL https://raw.githubusercontent.com/xyxyx718/shellclaude/feature/chatgpt-sign-in/shellclaude_auth.py -o shellclaude_auth.py
-curl -fsSL https://raw.githubusercontent.com/xyxyx718/shellclaude/feature/chatgpt-sign-in/shellclaude_responses.py -o shellclaude_responses.py
+curl -fsSL https://raw.githubusercontent.com/xyxyx718/shellclaude/feature/chatgpt-sign-in/install.py -o install.py
+python3 install.py
 python3 shellclaude.py
 ```
 
-使用 a-Shell 提供的 Python 3.13，不需要越狱、Node、Rust、Codex CLI、Docker 或远程服务器。上述链接指向本实现的 [feature/chatgpt-sign-in 分支](https://github.com/xyxyx718/shellclaude/tree/feature/chatgpt-sign-in)。
+安装器使用 Python 标准库，自动安装主程序、OAuth／Responses 模块、独立 AGENTS.md、规则版本记录和依赖说明。所有文件取自同一个固定 Git 提交；先完整下载和校验，再替换，替换失败会回滚。配置、会话、自定义规则及 Library 内的登录凭据不被安装器覆盖。
 
-`rich` 是原项目可选的显示依赖；新登录只增加纯 Python PyJWT、rsa 及 rsa 的 pyasn1 依赖。不要安装 `PyJWT[crypto]`，不需要编译扩展。只用旧 API-key provider 时，仍可继续单文件安装，不需新依赖。
+以后更新：
+
+```sh
+python3 install.py
+python3 shellclaude.py
+```
+
+也可用 `python3 install.py --dir <安装目录>` 指定位置，或用 `--ref <分支/标签/提交>` 选择版本。默认发布分支是 [feature/chatgpt-sign-in](https://github.com/xyxyx718/shellclaude/tree/feature/chatgpt-sign-in)。需要切换安装位置时，将原来的 `shellclaude-data/` 一起移动。
+
+安装器只更新应用文件，不自动改动 Python 依赖。首次使用 ChatGPT 登录时执行：
+
+```sh
+python3 -m pip install -r requirements-chatgpt.txt
+```
+
+`rich` 为可选彩色显示依赖，可用 `python3 -m pip install rich` 安装。DeepSeek 和其他 API-key provider 使用标准库即可。后续使用安装器统一更新，不再单独下载主文件。
 
 ### 首次登录与模型选择
 
@@ -93,7 +106,7 @@ python3 shellclaude.py
 
 思考力度可选 low、high、max；关闭思考后力度设置不发送。输出预算由 max_tokens 控制，包含思考开销；截断或断流不会执行不完整工具调用。DeepSeek 请求不自动重放，余额不足、认证或限流错误会明确提示。
 
-仅使用 DeepSeek 时只需 `shellclaude.py`，无需 OpenAI SDK、OAuth 模块或新依赖。`/auth method deepseek` 也可切换；`/auth status` 查看状态。使用 DeepSeek 平台的 API 额度计费，与 ChatGPT 订阅无关。
+DeepSeek 无需 OpenAI SDK 或额外依赖，程序文件由安装器统一管理。`/auth method deepseek` 也可切换；`/auth status` 查看状态。使用 DeepSeek 平台的 API 额度计费，与 ChatGPT 订阅无关。
 
 实现依据：[官方接入说明](https://api-docs.deepseek.com/)、[思考模式与工具调用](https://api-docs.deepseek.com/guides/thinking_mode/)、[模型目录](https://api-docs.deepseek.com/api/list-models/)。
 
@@ -125,16 +138,16 @@ OAuth 凭据继续单独放在本机 Library，不放入项目目录；本次路
 
 ### 预置 a-Shell 平台 AGENTS.md
 
-首次启动会在 `shellclaude-data/AGENTS.md` 生成预置平台规则，无需额外下载，也不会在你的项目中创建或覆盖 AGENTS.md。规则区分平台、具体运行时与 shellclaude 自身策略。依据用户提供的 a-Shell 真机报告修订：Node/npm、原生扩展、前台线程和 asyncio 不能被一概认定为不可用；命令存在、查询成功和完整项目可运行需分别验证。
+安装器下载 `defaults/AGENTS.md`，首次启动将其复制到 `shellclaude-data/AGENTS.md` 作为用户平台规则，也不会在你的项目中创建或覆盖 AGENTS.md。规则区分平台、具体运行时与 shellclaude 自身策略。依据用户提供的 a-Shell 真机报告修订：Node/npm、原生扩展、前台线程和 asyncio 不能被一概认定为不可用；命令存在、查询成功和完整项目可运行需分别验证。
 
 平台规则与项目规则分开：平台规则在每次 API 请求中附加，项目自己的 AGENTS.md 仍按当前目录向上查找并加载。自定义 system prompt、persona 或切换模型不会自动移除平台规则。这是给模型的运行提示，工具审批和硬性过滤仍由代码执行，不把 AGENTS.md 当作安全沙箱。
 
 - `/agents`：显示平台规则文件与当前项目规则来源。
 - 手动编辑 `shellclaude-data/AGENTS.md` 可以补充本机已验证的工具、路径和版本。启动时仅自动升级内容完全匹配已知旧预置版本的文件；手动修改过的文件保留。
 - `/agents reload`：重新读取两份规则，包括同一路径文件的新修改。
-- 平台文件不存在、为空或不可读时，使用内置默认内容；要恢复预置文件，可退出程序后删除该文件，再启动。
+- 用户平台文件不存在、为空或不可读时，读取 `defaults/AGENTS.md`；要恢复预置文件，可退出程序后删除该文件，再启动。
 
-仓库内的 [defaults/AGENTS.md](defaults/AGENTS.md) 是可审阅的预置文本，主程序同时内置一份，保持原来的直接下载 Python 文件安装方式。
+[defaults/AGENTS.md](defaults/AGENTS.md) 是唯一的预置规则文本，主程序不再内置副本。安装器负责同步该文件，`defaults/agents-history.json` 记录可自动升级的历史预置版本。自定义文件与预置文件都不可读时，会提示运行安装器补齐文件。
 
 真机审查同时发现并修复：patch_file 在读取与显示差异之前检查受保护／敏感路径，普通未放行补丁需审批；编译器即使返回 0，也必须生成非空目标才会尝试运行。缺 SDK 或运行失败会明确报告错误。C/C++ 封装仍会对已生成的临时目标调用 chmod，因此不能用于用户禁止修改权限的审计。
 

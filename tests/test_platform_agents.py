@@ -24,7 +24,7 @@ class PlatformAgentsTests(unittest.TestCase):
             p.start()
             self.addCleanup(p.stop)
 
-    def test_embedded_rules_match_reviewable_bundled_document(self):
+    def test_rules_are_loaded_from_external_bundled_document(self):
         bundled = Path(app.__file__).parent / "defaults" / "AGENTS.md"
         self.assertEqual(bundled.read_text(), app.DEFAULT_PLATFORM_AGENTS)
 
@@ -37,7 +37,7 @@ class PlatformAgentsTests(unittest.TestCase):
         self.assertEqual(self.platform.read_text(), "平台规则：自定义 Python 测试要求")
         self.assertIn("自定义 Python", app._sys_prompt(app.DEFAULT_CFG))
 
-    def test_missing_empty_or_invalid_file_uses_embedded_rules(self):
+    def test_missing_empty_or_invalid_custom_file_uses_distribution_rules(self):
         self.assertEqual(app.load_platform_agents(), app.DEFAULT_PLATFORM_AGENTS)
         self.platform.parent.mkdir()
         for content in (b"", b"\xff"):
