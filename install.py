@@ -17,33 +17,16 @@ from urllib.request import Request, urlopen
 
 REPOSITORY = "xyxyx718/shellclaude"
 DEFAULT_REF = "feature/chatgpt-sign-in"
-MANIFEST = "release-files.sha256"
+FILES = (
+    "shellclaude.py", "install.py", "install.sh", "requirements-chatgpt.txt", "README.md",
+    "shellclaude_lib/__init__.py", "shellclaude_lib/auth.py", "shellclaude_lib/responses.py",
+    "defaults/AGENTS.md", "defaults/agents-history.json",
+)
 LEGACY_MODULE_HASHES = {'shellclaude_auth.py': '26a8ad00e0b3c7a76ec5932917bad43db22fc8987c63c6503612991deba1ad7e', 'shellclaude_responses.py': 'c8967a7ff45f7924f39a0fa8e143819e4ec5b917d76f33d7db5a5e649e796286'}
 
 
-def parse_manifest(body):
-    entries = {}
-    for line in body.decode("utf-8").splitlines():
-        if not line or line.startswith("#"):
-            continue
-        match = re.fullmatch(r"([0-9a-f]{64})  ([A-Za-z0-9_.-]+(?:/[A-Za-z0-9_.-]+)*)", line)
-        if not match:
-            raise ValueError("发布清单格式错误")
-        digest, path = match.groups()
-        parts = path.split("/")
-        if any(part in (".", "..") for part in parts) or path in entries or not (
-            path in {"shellclaude.py", "install.py", "install.sh", "requirements-chatgpt.txt", "README.md"}
-            or (len(parts) == 2 and parts[0] in {"shellclaude_lib", "defaults"})
-        ):
-            raise ValueError("发布清单含不允许的路径")
-        entries[path] = digest
-    if not {"shellclaude.py", "install.py", "install.sh", "shellclaude_lib/__init__.py", "shellclaude_lib/auth.py", "shellclaude_lib/responses.py", "defaults/AGENTS.md", "defaults/agents-history.json"} <= entries.keys():
-        raise ValueError("发布清单缺少必要文件")
-    return entries
-
-
 def download(url):
-    req = Request(url, headers={"User-Agent": "shellclaude-installer", "Accept": "application/vnd.github+json"})
+    req = Request(url, headers={"User-Agent": "shellclaude-installer"})
     try:
         with urlopen(req, timeout=60) as response:
             data = response.read(4_000_001)
@@ -87,12 +70,9 @@ def publish(source, target):
             os.unlink(temporary)
 
 
-def install(destination, ref=DEFAULT_REF, source=None):
+def install(destination, ref=DEFAULT_REF):
     base = f"https://raw.githubusercontent.com/{REPOSITORY}/{quote(ref, safe='/')}/"
-    source = Path(source).resolve() if source else None
-    manifest_body = (source / MANIFEST).read_bytes() if source else download(base + MANIFEST)
-    entries = parse_manifest(manifest_body)
-    commit = hashlib.sha256(manifest_body).hexdigest()
+    commit = ref
     destination = Path(destination).expanduser().resolve()
     destination.mkdir(parents=True, exist_ok=True)
     data_dir = destination / "shellclaude-data"
@@ -110,13 +90,12 @@ def install(destination, ref=DEFAULT_REF, source=None):
             previous, changed = {}, []
             (staging / "old").mkdir()
             # Complete every download, parse and backup before replacing anything.
-            for relative in entries:
+            for relative in FILES:
                 target = destination / relative
                 if target.is_symlink() or not target.resolve().is_relative_to(destination):
                     raise RuntimeError(f"安装目标是符号链接或位于安装目录之外：{relative}")
-                body = (source / relative).read_bytes() if source else download(base + relative)
-                if hashlib.sha256(body).hexdigest() != entries[relative]:
-                    raise ValueError(f"文件校验失败：{relative}，请重新运行更新。")
+                print(f"下载 [{FILES.index(relative) + 1}/{len(FILES)}] {relative}", flush=True)
+                body = download(base + relative)
                 validate(relative, body)
                 staged = staging / "new" / relative
                 staged.parent.mkdir(parents=True, exist_ok=True)
@@ -137,7 +116,7 @@ def install(destination, ref=DEFAULT_REF, source=None):
                     previous[relative] = backup
                     obsolete.append(relative)
             try:
-                for relative in entries:
+                for relative in FILES:
                     # Include this path before replacing, so a partial write also rolls back.
                     changed.append(relative)
                     publish(staging / "new" / relative, destination / relative)
@@ -171,19 +150,13 @@ def main():
     parser = argparse.ArgumentParser(description="安装或更新 shellclaude（保留配置、会话和自定义规则）")
     parser.add_argument("--dir", default=str(Path(__file__).resolve().parent), help="安装目录，默认安装脚本所在目录")
     parser.add_argument("--ref", default=DEFAULT_REF, help="GitHub 分支、标签或提交")
-    parser.add_argument("--source", help="由 shell 脚本下载的暂存目录")
-    parser.add_argument("--list", dest="list_manifest", help="验证清单并输出下载路径")
     args = parser.parse_args()
-    if args.list_manifest:
-        for path in parse_manifest(Path(args.list_manifest).read_bytes()):
-            print(path)
-        return 0
     try:
-        commit = install(args.dir, args.ref, args.source)
+        commit = install(args.dir, args.ref)
     except (OSError, ValueError, SyntaxError, RuntimeError, sqlite3.Error) as exc:
         print(f"安装/更新失败：{exc}")
         return 1
-    print(f"安装/更新完成：{Path(args.dir).expanduser().resolve()}（{commit[:12]}）")
+    print(f"安装/更新完成：{Path(args.dir).expanduser().resolve()}（{commit}）")
     print("配置、会话、自定义 AGENTS.md 和登录凭据已保留。")
     print("启动：python3 shellclaude.py")
     print("首次使用 ChatGPT 登录时安装依赖：python3 -m pip install -r requirements-chatgpt.txt")
